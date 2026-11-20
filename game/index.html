@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar Heat — Open-World Crime in Solmar Bay</title>
+<link rel="stylesheet" href="./style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="hud-top-left">
+      <div id="health-wrap"><div id="health-bar"></div><span id="health-text">100</span></div>
+      <div id="money">$<span id="money-text">250</span></div>
+      <div id="rep">REP <span id="rep-text">0</span> &nbsp;·&nbsp; <span id="mission-name">Free Roam</span></div>
+    </div>
+    <div id="wanted"><span class="star" data-s="1">★</span><span class="star" data-s="2">★</span><span class="star" data-s="3">★</span><span class="star" data-s="4">★</span><span class="star" data-s="5">★</span></div>
+    <div id="objective"><span id="objective-text">Explore Solmar Bay.</span></div>
+    <div id="speedo" class="hidden"><span id="speed-text">0</span> <small>mph</small><div id="car-hint">E — leave car · SPACE — handbrake</div></div>
+    <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="crosshair" class="hidden">+</div>
+    <div id="toast"></div>
+    <div id="interact" class="hidden">Press <b>E</b> to enter the car</div>
+    <div id="vignette"></div>
+  </div>
+
+  <!-- Start screen -->
+  <div id="start-screen">
+    <div class="panel">
+      <h1>SOLMAR <span>HEAT</span></h1>
+      <p class="tagline">An open-world crime story in Solmar Bay</p>
+      <p class="story">Rico Vega came back to Solmar Bay with a busted car, a borrowed pistol and a
+      $40,000 debt to Marla Voss of the Marlin Club. The only way out is through the city —
+      drive, steal, run jobs, and stay one step ahead of the Solmar Bay Police.</p>
+      <div class="buttons">
+        <button id="btn-new">▶ New Game</button>
+        <button id="btn-continue" class="hidden">Continue — <span id="continue-label"></span></button>
+        <button id="btn-how">How to play</button>
+      </div>
+      <div id="howto" class="hidden">
+        <b>W A S D</b> move / drive &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>SHIFT</b> sprint<br>
+        <b>E</b> enter / leave a car &nbsp;·&nbsp; <b>Click</b> shoot &nbsp;·&nbsp; <b>Q</b> punch<br>
+        <b>SPACE</b> handbrake &nbsp;·&nbsp; <b>ESC / P</b> pause &nbsp;·&nbsp; <b>M</b> mute<br>
+        Steal cars, finish missions, earn cash and rep. Lose the cops to drop your wanted level.
+      </div>
+      <p class="foot">Solmar Heat is an original game. Any resemblance to real cities or people is coincidence.</p>
+    </div>
+  </div>
+
+  <!-- Pause screen -->
+  <div id="pause-screen" class="hidden">
+    <div class="panel">
+      <h2>PAUSED</h2>
+      <p id="pause-stats"></p>
+      <div class="buttons">
+        <button id="btn-resume">Resume</button>
+        <button id="btn-restart-mission">Restart mission</button>
+        <button id="btn-save">Save game</button>
+        <button id="btn-quit">Quit to title</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game over / busted screen -->
+  <div id="end-screen" class="hidden">
+    <div class="panel">
+      <h2 id="end-title">BUSTED</h2>
+      <p id="end-text"></p>
+      <div class="buttons">
+        <button id="btn-retry">Try again</button>
+        <button id="btn-end-quit">Quit to title</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mission complete banner -->
+  <div id="banner" class="hidden"><div id="banner-title"></div><div id="banner-sub"></div></div>
+  <div id="loading">Loading Solmar Bay…</div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
