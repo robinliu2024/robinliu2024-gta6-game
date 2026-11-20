@@ -1,36 +1,33 @@
-// save.js — localStorage saves: money, rep, debt paid, mission progress, health
-// and where Rico was standing. A save is written after every mission and from
-// the pause menu; Continue on the title screen picks it back up.
-import { MISSIONS, START_HEALTH } from './config.js';
+// Solmar Heat — save wrapper: a thin layer over state.js save/load.
+// Autosave timer, named save slots, Continue flow (load, then start the
+// saved mission), and New Game reset. No save format of its own.
 
-const SAVE_KEY = 'solmar-heat.save.v1';
+import { SAVE_KEY } from './config.js';
+import {
+  state, saveGame, loadSave, applySave, clearSave, resetState, hasSave,
+} from './state.js';
 
-export function saveGame(G) {
+export const AUTOSAVE_SECONDS = 15;
+
+function slotKey(slot) {
+  return slot && slot !== 'main' ? `${SAVE_KEY}:${slot}` : SAVE_KEY;
+}
+
+export function saveToSlot(slot) {
   try {
-    const p = G.player;
-    const data = {
-      version: 1,
-      money: Math.round(p.money),
-      rep: p.rep,
-      debtPaid: G.debtPaid,
-      missionIndex: G.missionIndex,
-      health: Math.round(p.health),
-      x: Math.round(p.x),
-      z: Math.round(p.z),
-      storyDone: G.storyDone,
-      stats: G.stats,
-      savedAt: Date.now(),
-    };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    const ok = saveGame();
+    if (!ok || !slot || slot === 'main') return ok;
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (raw) localStorage.setItem(slotKey(slot), raw);
     return true;
   } catch {
-    return false; // Storage off (private window): the session still plays fine.
+    return false;
   }
 }
 
-export function loadSave() {
+export function loadFromSlot(slot) {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(slotKey(slot));
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (!data || data.version !== 1) return null;
@@ -40,26 +37,71 @@ export function loadSave() {
   }
 }
 
-export function applySave(G, data) {
-  const p = G.player;
-  p.money = data.money;
-  p.rep = data.rep;
-  G.debtPaid = data.debtPaid;
-  G.missionIndex = Math.min(data.missionIndex, MISSIONS.length - 1);
-  p.health = data.health || START_HEALTH;
-  p.x = data.x;
-  p.z = data.z;
-  G.storyDone = !!data.storyDone;
-  if (data.stats) G.stats = data.stats;
+export function listSlots() {
+  const slots = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`${SAVE_KEY}:`)) slots.push(key.slice(SAVE_KEY.length + 1));
+    }
+  } catch { /* storage unavailable */ }
+  return slots;
 }
 
-export function describeSave(data) {
-  if (!data) return '';
-  const m = MISSIONS[data.missionIndex];
-  const when = new Date(data.savedAt).toLocaleDateString();
-  return `$${data.money} · ${m ? m.name : 'Story done'} · ${when}`;
+export function createSaveManager(deps = {}) {
+  const getMissions = deps.getMissions || (() => null);
+  let timer = 0;
+  let lastSavedAt = 0;
+
+  function saveNow(slot) {
+    const ok = saveToSlot(slot);
+    if (ok) lastSavedAt = Date.now();
+    return ok;
+  }
+
+  // Call every frame with dt while playing; autosaves on a timer.
+  function autosave(dt, playing) {
+    if (!playing) return false;
+    timer += dt;
+    if (timer >= AUTOSAVE_SECONDS) {
+      timer = 0;
+      return saveNow();
+    }
+    return false;
+  }
+
+  // Continue flow: load the save, then start whichever mission it was on.
+  function continueGame() {
+    const save = loadSave();
+    if (!save) return false;
+    if (!applySave(save)) return false;
+    const missions = getMissions();
+    if (missions && state.missionId) missions.startMission(state.missionId);
+    return true;
+  }
+
+  // New Game: wipe the save and the runtime state, start mission m1.
+  function newGame() {
+    clearSave();
+    resetState();
+    state.started = false;
+    const missions = getMissions();
+    if (missions) missions.startMission('m1');
+    timer = 0;
+    return true;
+  }
+
+  function wipe() {
+    clearSave();
+    timer = 0;
+  }
+
+  return {
+    saveNow, autosave, continueGame, newGame, wipe,
+    get lastSavedAt() { return lastSavedAt; },
+    hasSave: () => hasSave(),
+  };
 }
 
-export function clearSave() {
-  try { window.localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-}
+export { saveGame, loadSave, applySave, clearSave, resetState, hasSave };
+export default createSaveManager;

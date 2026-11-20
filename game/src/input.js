@@ -1,90 +1,126 @@
-// input.js — keyboard + mouse. Held keys are read every frame; one-shot presses
-// (enter car, punch, pause, mute) are queued as flags and taken once by the loop.
+// Solmar Heat — input: keyboard + mouse-look state.
+// Singleton: tracks held keys, edge-pressed keys, mouse deltas and clicks.
+// No DOM game logic lives here; gameplay modules read this object each frame.
 
-export const ACTION_ENTER = 1;
-export const ACTION_PUNCH = 2;
-export const ACTION_PAUSE = 4;
-export const ACTION_MUTE = 8;
-export const ACTION_SHOOT = 16;
+const KEY_ALIASES = {
+  KeyW: 'up', ArrowUp: 'up',
+  KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left',
+  KeyD: 'right', ArrowRight: 'right',
+  ShiftLeft: 'sprint', ShiftRight: 'sprint',
+  Space: 'handbrake',
+  KeyE: 'enter',
+  KeyQ: 'punch', KeyF: 'punch',
+  KeyP: 'pause', Escape: 'pause',
+};
 
-const FORWARD = new Set(['KeyW', 'ArrowUp']);
-const BACK = new Set(['KeyS', 'ArrowDown']);
-const LEFT = new Set(['KeyA', 'ArrowLeft']);
-const RIGHT = new Set(['KeyD', 'ArrowRight']);
-const SPRINT = new Set(['ShiftLeft', 'ShiftRight']);
-const BRAKE = new Set(['Space']);
+class Input {
+  constructor() {
+    this.held = {};          // action -> boolean, true while key down
+    this.pressed = {};       // action -> boolean, true only on the frame it went down
+    this.mouseDX = 0;        // accumulated pointer movement since last consume
+    this.mouseDY = 0;
+    this.mouseDown = false;  // left button held (shoot)
+    this.mouseClicked = false; // left button pressed this frame
+    this.pointerLocked = false;
+    this.onPause = null;     // callback assigned by main.js
+    this._listeners = [];
+    this._onKeyDown = this._onKeyDown.bind(this);
+    this._onKeyUp = this._onKeyUp.bind(this);
+    this._onMouseMove = this._onMouseMove.bind(this);
+    this._onMouseDown = this._onMouseDown.bind(this);
+    this._onMouseUp = this._onMouseUp.bind(this);
+    this._onLockChange = this._onLockChange.bind(this);
+    this._attach();
+  }
 
-export function createInput(canvas) {
-  const keys = new Set();
-  let actions = 0;
-  let mouseDX = 0;
-  let mouseDY = 0;
-  let mouseDown = false;
-  let pointerLocked = false;
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
+  _attach() {
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('mousemove', this._onMouseMove);
+    window.addEventListener('mousedown', this._onMouseDown);
+    window.addEventListener('mouseup', this._onMouseUp);
+    document.addEventListener('pointerlockchange', this._onLockChange);
+  }
 
-  window.addEventListener('keydown', (event) => {
-    if (event.repeat) return;
-    keys.add(event.code);
-    if (event.code === 'KeyE') actions |= ACTION_ENTER;
-    else if (event.code === 'KeyQ') actions |= ACTION_PUNCH;
-    else if (event.code === 'KeyP' || event.code === 'Escape') actions |= ACTION_PAUSE;
-    else if (event.code === 'KeyM') actions |= ACTION_MUTE;
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => keys.delete(event.code));
-  window.addEventListener('blur', () => keys.clear());
+  _onKeyDown(e) {
+    const action = KEY_ALIASES[e.code];
+    if (!action) return;
+    if (['up', 'down', 'left', 'right', 'handbrake'].includes(action)) e.preventDefault();
+    if (!this.held[action]) this.pressed[action] = true;
+    this.held[action] = true;
+    if (action === 'pause' && this.pressed[action] && this.onPause) this.onPause();
+  }
 
-  canvas.addEventListener('mousedown', (event) => {
-    mouseDown = true;
-    if (event.button === 0) actions |= ACTION_SHOOT;
-    // Clicking the canvas grabs the pointer for mouse-look (desktop Chrome).
-    if (!pointerLocked && canvas.requestPointerLock) {
-      try { canvas.requestPointerLock(); } catch { /* pointer lock is a nicety, not a need */ }
-    }
-  });
-  window.addEventListener('mouseup', () => { mouseDown = false; });
-  document.addEventListener('pointerlockchange', () => {
-    pointerLocked = document.pointerLockElement === canvas;
-  });
-  document.addEventListener('mousemove', (event) => {
-    if (pointerLocked) {
-      mouseDX += event.movementX || 0;
-      mouseDY += event.movementY || 0;
-    } else if (dragging) {
-      mouseDX += event.clientX - lastX;
-      mouseDY += event.clientY - lastY;
-      lastX = event.clientX; lastY = event.clientY;
-    }
-  });
-  // Drag-to-look fallback when pointer lock is unavailable (headless shots).
-  canvas.addEventListener('mousedown', (event) => { dragging = true; lastX = event.clientX; lastY = event.clientY; });
-  window.addEventListener('mouseup', () => { dragging = false; });
+  _onKeyUp(e) {
+    const action = KEY_ALIASES[e.code];
+    if (action) this.held[action] = false;
+  }
 
-  return {
-    /** -1..1 forward/back and left/right from held keys. */
-    move() {
-      const f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0);
-      const s = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0) - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
-      return { forward: f, strafe: s, sprint: [...SPRINT].some((k) => keys.has(k)), brake: [...BRAKE].some((k) => keys.has(k)) };
-    },
-    isDown(code) { return keys.has(code); },
-    mouseDown() { return mouseDown; },
-    /** Mouse-look deltas since the last call (pixels). */
-    takeMouse() {
-      const d = { dx: mouseDX, dy: mouseDY };
-      mouseDX = 0; mouseDY = 0;
-      return d;
-    },
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-    /** Test/driver hook: pretend a key is held (used by the shot autopilot). */
-    inject(code, down) { if (down) keys.add(code); else keys.delete(code); },
-    pressAction(flag) { actions |= flag; },
-  };
+  _onMouseMove(e) {
+    if (!this.pointerLocked) return;
+    this.mouseDX += e.movementX || 0;
+    this.mouseDY += e.movementY || 0;
+  }
+
+  _onMouseDown(e) {
+    if (e.button !== 0) return;
+    this.mouseDown = true;
+    this.mouseClicked = true;
+  }
+
+  _onMouseUp(e) {
+    if (e.button === 0) this.mouseDown = false;
+  }
+
+  _onLockChange() {
+    this.pointerLocked = document.pointerLockElement === document.body
+      || document.pointerLockElement === document.getElementById('game-canvas');
+  }
+
+  // Ask the browser to capture the mouse for look control. Safe no-op if it fails.
+  requestPointerLock() {
+    try {
+      const el = document.getElementById('game-canvas') || document.body;
+      el.requestPointerLock?.();
+    } catch { /* pointer lock unavailable */ }
+  }
+
+  // Movement axes in -1..1, from held keys.
+  axes() {
+    const x = (this.held.right ? 1 : 0) - (this.held.left ? 1 : 0);
+    const y = (this.held.up ? 1 : 0) - (this.held.down ? 1 : 0);
+    return { x, y };
+  }
+
+  get sprinting() { return !!this.held.sprint; }
+
+  // Consume this frame's mouse delta (call once per frame from the camera code).
+  consumeMouseDelta() {
+    const d = { dx: this.mouseDX, dy: this.mouseDY };
+    this.mouseDX = 0;
+    this.mouseDY = 0;
+    return d;
+  }
+
+  // True once, on the frame the action key went down.
+  wasPressed(action) { return !!this.pressed[action]; }
+
+  // Call at the end of each frame so edge presses only fire once.
+  endFrame() {
+    this.pressed = {};
+    this.mouseClicked = false;
+  }
+
+  dispose() {
+    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('mousemove', this._onMouseMove);
+    window.removeEventListener('mousedown', this._onMouseDown);
+    window.removeEventListener('mouseup', this._onMouseUp);
+    document.removeEventListener('pointerlockchange', this._onLockChange);
+  }
 }
+
+export const input = new Input();
+export default input;
