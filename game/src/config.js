@@ -59,7 +59,7 @@ export function hashSeed(str) {
   return h >>> 0;
 }
 
-// Mission definitions. Five story missions; debt is paid down by rewards.
+// Mission definitions. Nine story missions; debt is paid down by rewards.
 export const MISSIONS = [
   {
     id: 'm1', name: 'First Fare', giver: 'Marla Voss',
@@ -102,13 +102,59 @@ export const MISSIONS = [
     reward: 5000, rep: 30, debtPaid: 5000,
   },
   {
-    id: 'm5', name: 'Debt Free', giver: 'Marla Voss',
-    brief: 'One last run: take the ledger from the Marina warehouse to the Marlin Club and settle the $40,000 debt for good.',
+    id: 'm5', name: 'The Ledger', giver: 'Marla Voss',
+    brief: 'One last run: take the ledger from the Marina warehouse to the Marlin Club and settle the $40,000 debt for good. Or so Marla says.',
     objectives: [
       { id: 'ledger', text: 'Take the ledger from the Marina', kind: 'pickup', at: 'marina' },
       { id: 'deliver', text: 'Deliver the ledger to the Marlin Club', kind: 'goto', at: 'marlinClub' },
     ],
-    reward: 10000, rep: 50, debtPaid: 40000,
+    reward: 10000, rep: 50, debtPaid: 10000,
+  },
+  {
+    id: 'm6', name: 'Solmar Grand Prix', giver: 'Marla Voss',
+    brief: 'The debt\'s new owner runs Solmar\'s underground street race. Win it — four checkpoints, two minutes — and he knocks $4,000 off your tab.',
+    objectives: [
+      { id: 'cp1', text: 'Race checkpoint 1/4 — Downtown', kind: 'goto', at: 'downtown' },
+      { id: 'cp2', text: 'Race checkpoint 2/4 — Boardwalk', kind: 'goto', at: 'boardwalk' },
+      { id: 'cp3', text: 'Race checkpoint 3/4 — Marina', kind: 'goto', at: 'marina' },
+      { id: 'cp4', text: 'Race checkpoint 4/4 — Marlin Club finish', kind: 'goto', at: 'marlinClub' },
+    ],
+    reward: 4000, rep: 40, debtPaid: 4000,
+    timeLimit: 120,
+  },
+  {
+    id: 'm7', name: 'The Vault Job', giver: 'Marla Voss',
+    brief: 'The man who bought your debt owns the Bayfront Bank Downtown. Rob his vault, shake the three-star police tail, and bring the cash to the Safehouse.',
+    objectives: [
+      { id: 'bank', text: 'Get to the Bayfront Bank Downtown', kind: 'goto', at: 'downtown' },
+      { id: 'vault', text: 'Crack the vault and grab the cash', kind: 'pickup', at: 'downtown' },
+      { id: 'escape', text: 'Lose the police (drop to 0 stars)', kind: 'escape', at: 'downtown' },
+      { id: 'safehouse', text: 'Bring the cash to the Safehouse', kind: 'goto', at: 'safehouse' },
+    ],
+    reward: 6000, rep: 50, debtPaid: 6000,
+    wantedOnPickup: 3,
+  },
+  {
+    id: 'm8', name: 'Chopper Out', giver: 'Marla Voss',
+    brief: 'The bank job put every cop in Solmar on you. Marla has a helicopter waiting at the Marina helipad — grab the getaway bag, lose the tail, and vanish.',
+    objectives: [
+      { id: 'helipad', text: 'Grab the getaway bag at the Marina helipad', kind: 'pickup', at: 'marina' },
+      { id: 'escape', text: 'Lose the police (drop to 0 stars)', kind: 'escape', at: 'marina' },
+      { id: 'safehouse', text: 'Reach the Safehouse', kind: 'goto', at: 'safehouse' },
+    ],
+    reward: 5000, rep: 60, debtPaid: 5000,
+    wantedOnPickup: 4,
+  },
+  {
+    id: 'm9', name: 'Settle Up', giver: 'Marla Voss',
+    brief: 'Last job, for real this time: take the payoff cash from the Safehouse to the Marlin Club and settle the $40,000 debt for good.',
+    objectives: [
+      { id: 'cash', text: 'Grab the payoff cash at the Safehouse', kind: 'pickup', at: 'safehouse' },
+      { id: 'escape', text: 'Lose the police (drop to 0 stars)', kind: 'escape', at: 'safehouse' },
+      { id: 'deliver', text: 'Deliver the payoff to the Marlin Club', kind: 'goto', at: 'marlinClub' },
+    ],
+    reward: 10000, rep: 100, debtPaid: 4700,
+    wantedOnPickup: 2,
   },
 ];
 

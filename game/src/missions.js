@@ -1,4 +1,4 @@
-// Solmar Heat — missions: runs the five story missions from config.js.
+// Solmar Heat — missions: runs the nine story missions from config.js.
 // Objective kinds: goto / pickup / steal / collect / escape. A beacon marks
 // the current target; steps advance on radius checks. Rewards pay money,
 // reputation and debt. Dialogue from Marla Voss and Danny "Fins" Cole.
@@ -23,8 +23,20 @@ const DIALOGUE = {
   m4_start: ['Marla Voss: "Three Downtown shops owe me protection money. Collect it all."'],
   m4_done: ['Danny "Fins" Cole: "Five grand. The shops won\'t forget your face — good."'],
   m5_start: ['Marla Voss: "Last job. The ledger from the Marina warehouse. Bring it to the Club and we\'re square."'],
-  m5_done: ['Marla Voss: "Debt\'s clear, Rico. Forty thousand, gone. Solmar Bay is yours now."'],
+  m5_done: ['Marla Voss: "Bad news. That ledger says your forty was sold — interest, fees, and a new owner who doesn\'t take payments."', 'Danny "Fins" Cole: "The new owner runs the Bayfront Bank. And the street race. And, uh... most of Solmar."'],
+  m6_start: ['Marla Voss: "The new owner runs an underground street race. Win it and he knocks four grand off your tab."', 'Danny "Fins" Cole: "Four checkpoints, two minutes, whole city watching. Don\'t scratch the paint — it\'s his paint."'],
+  m6_done: ['Marla Voss: "You beat his drivers on his own streets. Four grand off. He\'s not laughing now."'],
+  m7_start: ['Marla Voss: "The man who bought your debt owns the Bayfront Bank. Rob his vault — take back what\'s yours."', 'Danny "Fins" Cole: "Bank\'s Downtown. Vault cash, then vanish. The alarm will bring everybody."'],
+  m7_pickup: ['Danny "Fins" Cole: "You\'ve got three stars! Lose them, then get to the Safehouse!"'],
+  m7_done: ['Marla Voss: "Six grand of his own money, back off your tab. The bank\'s owner is furious — good."'],
+  m8_start: ['Marla Voss: "The bank job put every cop in Solmar on you. I\'ve got a helicopter at the Marina helipad — go."', 'Danny "Fins" Cole: "Grab the bag at the helipad, shake the tail, and don\'t look back."'],
+  m8_pickup: ['Danny "Fins" Cole: "Four stars! The whole SBPD is coming — lose them!"'],
+  m8_done: ['Marla Voss: "You flew out from under them. Five grand off. One job left, Rico — then we end this."'],
+  m9_start: ['Marla Voss: "Last job. For real this time. Take the payoff from the Safehouse to the Club and we settle forty thousand — for good."', 'Danny "Fins" Cole: "His crew tipped the cops. Expect company. Finish this, Rico."'],
+  m9_pickup: ['Danny "Fins" Cole: "Two stars on you already — lose them and get to the Club!"'],
+  m9_done: ['Marla Voss: "Forty thousand. Paid in full. The debt is dead, Rico — and so is anyone who tries to sell it again."', 'Danny "Fins" Cole: "Debt free. Solmar Bay is yours now — first round\'s on me."'],
   fail: ['Marla Voss: "You blew it. Get back out there — the debt doesn\'t wait."'],
+  fail_timeout: ['Marla Voss: "Too slow, Rico. The clock doesn\'t forgive — run it again."'],
 };
 
 function beaconMesh() {
@@ -60,6 +72,7 @@ export class MissionRunner {
     this.onComplete = null;  // fn(mission)
     this.onFail = null;      // fn(mission)
     this._time = 0;
+    this._missionTime = 0;   // seconds since the current mission started (race clock)
   }
 
   say(lines) {
@@ -85,6 +98,7 @@ export class MissionRunner {
     state.missionObjectiveIndex = 0;
     this.active = true;
     this.missionCar = null;
+    this._missionTime = 0;
     if (mission.id === 'm2' && this.world.vehicles) {
       const d = DISTRICTS.downtown;
       this.missionCar = this.world.vehicles.spawnMissionCar('coupe', d.x + 24, d.z + 18, Math.PI / 2);
@@ -102,7 +116,7 @@ export class MissionRunner {
     this.beacon.visible = false;
     state.failedMissions += 1;
     state.missionObjectiveIndex = 0;
-    this.say(DIALOGUE.fail);
+    this.say(reason === 'timeout' ? DIALOGUE.fail_timeout : DIALOGUE.fail);
     if (this.onFail) this.onFail(mission, reason);
   }
 
@@ -156,6 +170,14 @@ export class MissionRunner {
     const obj = currentObjective();
     const pos = this._playerPos();
     if (!mission || !obj || !pos) return;
+    // Timed missions (m6 street race): the clock runs out, the run fails.
+    if (mission.timeLimit) {
+      this._missionTime += dt;
+      if (this._missionTime > mission.timeLimit) {
+        this.failMission('timeout');
+        return;
+      }
+    }
     const target = this.targetPosition(obj);
     if (!target) return;
     const dist = Math.hypot(pos.x - target.x, pos.z - target.z);
