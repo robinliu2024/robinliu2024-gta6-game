@@ -16,6 +16,7 @@ const KEY_ALIASES = {
   KeyR: 'reload',
   KeyG: 'garage', // v2: open the Solmar Garage panel
   KeyC: 'radio',  // v2: cycle the radio stations
+  KeyK: 'crew',   // v3: open the crew recruit panel
 };
 
 class Input {

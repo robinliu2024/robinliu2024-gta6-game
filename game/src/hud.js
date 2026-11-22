@@ -18,6 +18,7 @@ export function createHud(deps = {}) {
   const getPlayer = deps.getPlayer || (() => null);
   const getPolice = deps.getPolice || (() => null);
   const getMissions = deps.getMissions || (() => null);
+  const getCrew = deps.getCrew || (() => null);
   // Dialogue hold: main.js owns the timer; we only ask whether a line is
   // still live and what it says, and never overwrite it while it is live.
   const getDialogue = deps.getDialogue || (() => ({ text: '', active: false }));
@@ -64,6 +65,21 @@ export function createHud(deps = {}) {
     refs.hud.appendChild(weaponEl);
   }
   refs.weapons = weaponEl;
+
+  // Crew panel (v3): recruited members with health + skill, created once.
+  // Shows a "press K" hint once the player can afford the first recruit.
+  let crewEl = el('hud-crew');
+  if (!crewEl && refs.hud) {
+    crewEl = document.createElement('div');
+    crewEl.id = 'hud-crew';
+    crewEl.style.cssText = [
+      'position:absolute', 'left:18px', 'bottom:118px',
+      'display:none', 'flex-direction:column', 'gap:4px',
+      'font-family:inherit', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(crewEl);
+  }
+  refs.crew = crewEl;
 
   // Crosshair, shown only while on foot with the pointer locked.
   let crossEl = el('hud-crosshair');
@@ -207,10 +223,11 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
-  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C).
+  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C) and
+  // the v3 crew key (K).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio';
+    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio · K crew';
   }
 
   let lastObjective = '';
@@ -284,6 +301,26 @@ export function createHud(deps = {}) {
       html += `<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:${c.isEmpty ? '#ff7d7d' : '#fff'};font-size:14px;font-weight:800;">${status}</div>`;
       if (refs.weapons.innerHTML !== html) refs.weapons.innerHTML = html;
       refs.weapons.style.display = player.onFoot ? 'flex' : 'none';
+    }
+    // Crew status (v3): one row per recruited member — name, skill, HP.
+    if (refs.crew) {
+      const crew = getCrew();
+      const members = crew ? crew.members : [];
+      if (!members.length && state.rep < 50) {
+        refs.crew.style.display = 'none';
+      } else {
+        let html = '';
+        if (!members.length) {
+          html = '<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:#ffd23f;font-size:12px;font-weight:700;">Press K — recruit your crew</div>';
+        }
+        for (const m of members) {
+          const pct = Math.max(0, Math.min(100, Math.round((m.health / m.maxHealth) * 100)));
+          const bar = m.down ? '#ff7d7d' : pct > 50 ? '#7dff8a' : '#ffd23f';
+          html += `<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:#fff;font-size:12px;font-weight:700;display:flex;gap:8px;align-items:center;"><span>${m.def.name} · ${m.def.skillName}</span><span style="width:56px;height:8px;border-radius:4px;background:rgba(255,255,255,0.2);overflow:hidden;display:inline-block;"><span style="display:block;width:${pct}%;height:100%;background:${bar};"></span></span><span style="color:${m.down ? '#ff7d7d' : '#ddd'};">${m.down ? 'DOWN' : `${pct}%`}</span></div>`;
+        }
+        if (refs.crew.innerHTML !== html) refs.crew.innerHTML = html;
+        refs.crew.style.display = 'flex';
+      }
     }
     // Crosshair: on foot, started, not game over.
     if (refs.crosshair) {

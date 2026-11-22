@@ -1,4 +1,4 @@
-// Solmar Heat — missions: runs the nine story missions from config.js.
+// Solmar Heat — missions: runs the twelve story missions from config.js.
 // Objective kinds: goto / pickup / steal / collect / escape. A beacon marks
 // the current target; steps advance on radius checks. Rewards pay money,
 // reputation and debt. Dialogue from Marla Voss and Danny "Fins" Cole.
@@ -35,6 +35,14 @@ const DIALOGUE = {
   m9_start: ['Marla Voss: "Last job. For real this time. Take the payoff from the Safehouse to the Club and we settle forty thousand — for good."', 'Danny "Fins" Cole: "His crew tipped the cops. Expect company. Finish this, Rico."'],
   m9_pickup: ['Danny "Fins" Cole: "Two stars on you already — lose them and get to the Club!"'],
   m9_done: ['Marla Voss: "Forty thousand. Paid in full. The debt is dead, Rico — and so is anyone who tries to sell it again."', 'Danny "Fins" Cole: "Debt free. Solmar Bay is yours now — first round\'s on me."'],
+  m10_start: ['Marla Voss: "Debt\'s dead, Rico. Now the city is the prize — Downtown first."', 'Danny "Fins" Cole: "A rival crew holds Downtown. Take their stash, take their shops, and don\'t get caught."'],
+  m10_pickup: ['Danny "Fins" Cole: "Stash grabbed — two stars! Lose them and Downtown is yours!"'],
+  m10_done: ['Marla Voss: "Downtown flies your flag now. The rest of Solmar just noticed."'],
+  m11_start: ['Marla Voss: "The SBPD armory Downtown. Enough hardware to arm a small army — go take it."', 'Danny "Fins" Cole: "Grab the arsenal and run. Three stars, minimum. Bring it to the Safehouse."'],
+  m11_pickup: ['Danny "Fins" Cole: "Three stars! Lose the tail, then stash the guns!"'],
+  m11_done: ['Marla Voss: "An army\'s worth of hardware, sitting in your Safehouse. The SBPD is furious — good."'],
+  m12_start: ['Marla Voss: "Last move, Rico. The Marina docks, the Downtown blocks — then walk into the Club as the one who runs this bay."', 'Danny "Fins" Cole: "Debt\'s paid. No more bosses, no more tabs. This one\'s for the crown."'],
+  m12_done: ['Marla Voss: "That\'s it. The docks, the blocks, the Club — Solmar Bay is yours, Rico. The debt is dead, and now you run the town."', 'Danny "Fins" Cole: "From forty grand in the hole to king of the Bay. First round\'s on the house — your house."'],
   fail: ['Marla Voss: "You blew it. Get back out there — the debt doesn\'t wait."'],
   fail_timeout: ['Marla Voss: "Too slow, Rico. The clock doesn\'t forgive — run it again."'],
 };
@@ -134,6 +142,11 @@ export class MissionRunner {
       this.active = false;
       this.beacon.visible = false;
       this.say(DIALOGUE[`${mission.id}_done`]);
+      // v3: M10 hands Downtown to the territory system — when it exists.
+      // The optional chain keeps the game running until that system lands.
+      if (mission.id === 'm10') {
+        try { this.world.territory?.capture('downtown'); } catch { /* territory is optional */ }
+      }
       if (this.onComplete) this.onComplete(mission);
       // Auto-start the next mission so the story keeps flowing.
       const next = missionById(state.missionId);
@@ -203,5 +216,5 @@ export class MissionRunner {
   }
 }
 
-export { MISSIONS };
+export { MISSIONS, DIALOGUE };
 export default MissionRunner;

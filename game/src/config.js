@@ -59,7 +59,9 @@ export function hashSeed(str) {
   return h >>> 0;
 }
 
-// Mission definitions. Nine story missions; debt is paid down by rewards.
+// Mission definitions. Twelve story missions; the $40,000 debt is paid
+// down by rewards through M9 (800+1500+3000+5000+10000+4000+6000+5000+4700
+// = 40000). M10-M12 pay cash + REP only — the debt is already dead.
 export const MISSIONS = [
   {
     id: 'm1', name: 'First Fare', giver: 'Marla Voss',
@@ -155,6 +157,44 @@ export const MISSIONS = [
     ],
     reward: 10000, rep: 100, debtPaid: 4700,
     wantedOnPickup: 2,
+  },
+  {
+    id: 'm10', name: 'Turf War', giver: 'Marla Voss',
+    brief: 'The debt is dead — now the city is the prize. Rally Downtown, seize the rival stash, take their shops, and lose the heat. Win Downtown and Solmar starts listening to you.',
+    objectives: [
+      { id: 'rally', text: 'Rally your crew Downtown', kind: 'goto', at: 'downtown' },
+      { id: 'stash', text: 'Seize the rival stash Downtown', kind: 'pickup', at: 'downtown' },
+      { id: 'take1', text: 'Take over Downtown turf (1/2)', kind: 'collect', at: 'downtown' },
+      { id: 'take2', text: 'Take over Downtown turf (2/2)', kind: 'collect', at: 'downtown' },
+      { id: 'escape', text: 'Lose the police (drop to 0 stars)', kind: 'escape', at: 'downtown' },
+    ],
+    reward: 6000, rep: 60, debtPaid: 0,
+    wantedOnPickup: 2,
+  },
+  {
+    id: 'm11', name: 'The Armory Heist', giver: 'Marla Voss',
+    brief: 'The SBPD armory Downtown holds enough hardware to arm a small army. Grab the arsenal, shake a three-star tail, and stash it at the Safehouse.',
+    objectives: [
+      { id: 'armory', text: 'Reach the Downtown armory', kind: 'goto', at: 'downtown' },
+      { id: 'arsenal', text: 'Grab the arsenal', kind: 'pickup', at: 'downtown' },
+      { id: 'escape', text: 'Lose the police (drop to 0 stars)', kind: 'escape', at: 'downtown' },
+      { id: 'safehouse', text: 'Stash the arsenal at the Safehouse', kind: 'goto', at: 'safehouse' },
+    ],
+    reward: 8000, rep: 80, debtPaid: 0,
+    wantedOnPickup: 3,
+  },
+  {
+    id: 'm12', name: "Empire's End", giver: 'Marla Voss',
+    brief: 'Last move: take the Marina docks, take the Downtown blocks, and walk into the Marlin Club as the one who runs Solmar Bay. The debt is paid — now Rico takes the crown.',
+    objectives: [
+      { id: 'docks', text: 'Take the Marina docks', kind: 'goto', at: 'marina' },
+      { id: 'dock1', text: 'Secure the Marina docks (1/2)', kind: 'collect', at: 'marina' },
+      { id: 'dock2', text: 'Secure the Marina docks (2/2)', kind: 'collect', at: 'marina' },
+      { id: 'blocks', text: 'Take the Downtown blocks', kind: 'goto', at: 'downtown' },
+      { id: 'block1', text: 'Secure the Downtown blocks', kind: 'collect', at: 'downtown' },
+      { id: 'club', text: 'Walk into the Marlin Club — Solmar Bay is yours', kind: 'goto', at: 'marlinClub' },
+    ],
+    reward: 15000, rep: 150, debtPaid: 0,
   },
 ];
 

@@ -18,6 +18,7 @@ import { createHud } from './hud.js';
 import { Effects } from './effects.js';
 import { createSaveManager } from './save.js';
 import { createGarageUI, applyPaintTo, RACE_WIN_BONUS_REP, NEAR_MISS_REP } from './garage.js';
+import { CrewManager } from './crew.js';
 import { applyShotSetup } from './shots.js';
 
 // --- URL query parsing: ?shot=, &seed=, &lq=1. Stored for part 3 shot mode. ---
@@ -65,9 +66,19 @@ const world = { player, vehicles, police, audio };
 const missions = new MissionRunner(scene, world);
 world.missions = missions;
 
+// v3: crew system — recruits follow Rico, the gunner fights in missions,
+// the driver softens police pressure (see police.crewModifiers below).
+const crew = new CrewManager(scene, world);
+world.crew = crew;
+crew.onRecruit = (def) => {
+  audio.sting();
+  hud.toast(`${def.name} joined your crew — ${def.skillName}!`, 3500);
+};
+
 // Part C systems: HUD, particles/skids/tracers/shake, save manager.
 const effects = new Effects(scene, { lowQuality: state.lowQuality });
 effects.subscribeToPlayer(player);
+world.effects = effects; // v3: crew gunner tracers go through effects
 // Combat targets: live cops (downed ones stop being targets) + living peds.
 // Mission gang members, when they exist, join this list the same way.
 player.setTargetProvider(() => [
@@ -106,6 +117,7 @@ const hud = createHud({
   getPlayer: () => player,
   getPolice: () => police,
   getMissions: () => missions,
+  getCrew: () => crew,
   getDialogue: () => ({ text: dialogueText, active: elapsed - dialogueAt < 5 }),
 });
 function updateHud() {
@@ -248,6 +260,11 @@ function animate() {
         const name = audio.cycleRadio();
         hud.toast(name ? `RADIO · ${name}` : 'RADIO OFF');
       }
+      // Crew panel (K) — v3: recruit Vic / Lena when REP allows.
+      if (input.wasPressed('crew')) {
+        crew.togglePanel();
+        audio.click();
+      }
       // Enter / exit car.
       if (input.wasPressed('enter')) {
         if (player.onFoot) {
@@ -326,7 +343,9 @@ function animate() {
         effects.addSkid({ x: bx, z: bz }, car.heading);
       }
       pedestrians.update(delta);
+      police.crewModifiers = crew.policeModifiers(); // v3: driver softens busts + decay
       police.update(delta, player, elapsed);
+      crew.update(delta);
       missions.update(delta);
       audio.engine(player.onFoot ? 0 : (player.vehicle ? player.vehicle.speedMph : 0));
       audio.siren(state.wanted > 0 && police.cops.length > 0);
@@ -368,6 +387,7 @@ window.__game = {
   pedestrians,
   police,
   missions,
+  crew,
   input,
   audio,
   hud,

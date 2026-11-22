@@ -25,6 +25,9 @@ export function createInitialState() {
     // Garage upgrades (garage.js): levels 0..3 per track + paint id.
     // Persisted in the save; runtime-only refs below are never saved.
     garage: { speed: 0, accel: 0, armor: 0, paint: 'teal' },
+    // Crew (crew.js, v3): recruited member ids + per-member health.
+    // Persisted in the save; meshes are rebuilt by CrewManager.
+    crew: { recruited: [], health: {} },
     // Weapon system (combat.js): current weapon + mag/reserve ammo per tier.
     // Runtime-only, not saved — a fresh run starts with a full loadout.
     weapons: {
@@ -142,6 +145,10 @@ export function saveShape() {
     kills: state.kills,
     carsStolen: state.carsStolen,
     garage: { ...(state.garage || { speed: 0, accel: 0, armor: 0, paint: 'teal' }) },
+    crew: {
+      recruited: [...((state.crew && state.crew.recruited) || [])],
+      health: { ...((state.crew && state.crew.health) || {}) },
+    },
     distanceDriven: Math.round(state.distanceDriven),
     playSeconds: Math.round(state.playSeconds),
     savedAt: Date.now(),
@@ -187,6 +194,11 @@ export function applySave(data) {
   state.garage = {
     speed: 0, accel: 0, armor: 0, paint: 'teal',
     ...(data.garage || {}),
+  };
+  // Older saves have no crew block; default to nobody recruited.
+  state.crew = {
+    recruited: Array.isArray(data.crew && data.crew.recruited) ? [...data.crew.recruited] : [],
+    health: { ...((data.crew && data.crew.health) || {}) },
   };
   return true;
 }

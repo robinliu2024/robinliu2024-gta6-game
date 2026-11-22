@@ -368,6 +368,9 @@ export class PoliceManager {
     this.heli = null;       // PoliceHeli while wanted >= 4
     this.roadblock = null;  // Roadblock while wanted >= 3
     this.roadblockTimer = 0;
+    // v3: driver-skill modifiers from the crew system, set by main.js each
+    // frame ({ bustHoldMult, decayMult }); null means no crew bonus.
+    this.crewModifiers = null;
   }
 
   wantedCount() { return Math.min(state.wanted, MAX_WANTED); }
@@ -481,9 +484,11 @@ export class PoliceManager {
         damagePlayer(2 * dt);
       }
       // Bust: on foot, a cop in range holds the player down.
+      // v3: a recruited driver in the crew makes the hold take longer.
       if (!inCar && dist < BUST_RANGE) {
         cop.bustTimer += dt;
-        if (cop.bustTimer >= BUST_HOLD_SECONDS && !this.busted) {
+        const hold = BUST_HOLD_SECONDS * (this.crewModifiers?.bustHoldMult ?? 1);
+        if (cop.bustTimer >= hold && !this.busted) {
           this.busted = true;
           state.gameOver = true;
           if (this.onBusted) this.onBusted();
@@ -504,7 +509,9 @@ export class PoliceManager {
     } else if (state.wanted > 0) {
       this.lastSeenTimer += dt;
       this.decayTimer += dt;
-      if (this.decayTimer >= TUNING.wantedDecaySeconds) {
+      // v3: a recruited driver in the crew cools the heat off faster.
+      const decaySeconds = TUNING.wantedDecaySeconds * (this.crewModifiers?.decayMult ?? 1);
+      if (this.decayTimer >= decaySeconds) {
         this.decayTimer = 0;
         setWanted(state.wanted - 1);
       }
