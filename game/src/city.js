@@ -7,6 +7,36 @@ import * as THREE from 'three';
 import { CITY, DISTRICTS, SPAWNS, makeRng } from './config.js';
 
 // Road centre lines: grid every CITY.blockSize across the playable area.
+// --- Day/night cycle: one full day every DAY_LENGTH seconds. Keyframed
+// sun / sky / fog colours keep the city readable at night (a moonlit floor
+// on the sun + hemisphere lights) while street lamps switch on after dusk.
+export const DAY_LENGTH = 240;
+const DAY_STOPS = [
+  // t, sun intensity, sun colour, hemi, sky, fog, night (0 = day, 1 = night)
+  { t: 0.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
+  { t: 0.15, sun: 2.60, sunColor: 0xfff1d6, hemi: 0.90, sky: 0x87b5e0, fog: 0x9fc3e8, night: 0 },
+  { t: 0.45, sun: 2.20, sunColor: 0xffe0b0, hemi: 0.80, sky: 0x7fa8d8, fog: 0x9ab8dd, night: 0 },
+  { t: 0.55, sun: 0.80, sunColor: 0xff8a4a, hemi: 0.45, sky: 0xb45a6e, fog: 0xc07a6a, night: 0.50 },
+  { t: 0.65, sun: 0.28, sunColor: 0x8aa0c8, hemi: 0.38, sky: 0x0e1a2e, fog: 0x14243a, night: 1 },
+  { t: 0.85, sun: 0.32, sunColor: 0x93a8d0, hemi: 0.40, sky: 0x0c1626, fog: 0x122032, night: 1 },
+  { t: 1.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
+];
+const _cA = new THREE.Color();
+const _cB = new THREE.Color();
+
+// Bracketing keyframe stops + smoothstep blend for a time of day in [0, 1).
+function dayNightStopsAt(time) {
+  const t = ((time % 1) + 1) % 1;
+  let i = 0;
+  while (i < DAY_STOPS.length - 2 && DAY_STOPS[i + 1].t <= t) i++;
+  const a = DAY_STOPS[i];
+  const b = DAY_STOPS[i + 1];
+  const span = Math.max(1e-6, b.t - a.t);
+  let f = Math.min(1, Math.max(0, (t - a.t) / span));
+  f = f * f * (3 - 2 * f); // smoothstep so dawn/dusk ease in
+  return { a, b, f };
+}
+
 export function roadLines() {
   const lines = [];
   for (let c = -CITY.halfSize; c <= CITY.halfSize; c += CITY.blockSize) {
@@ -278,13 +308,38 @@ export function buildCity(scene, options = {}) {
   pier.castShadow = true; pier.receiveShadow = true;
   group.add(pier);
 
+  // --- Day/night controller: lerps the lights / sky / fog between the
+  // keyframes above, and switches the street lamps + clouds with it.
+  // Starts mid-morning so the first screenshots are in daylight.
+  const dayNight = {
+    time: 0.18,
+    nightFactor: 0,
+    length: DAY_LENGTH,
+    setTime(t) {
+      this.time = ((t % 1) + 1) % 1;
+      const { a, b, f } = dayNightStopsAt(this.time);
+      const lerp = (x, y) => x + (y - x) * f;
+      sun.intensity = lerp(a.sun, b.sun);
+      sun.color.lerpColors(_cA.setHex(a.sunColor), _cB.setHex(b.sunColor), f);
+      hemi.intensity = lerp(a.hemi, b.hemi);
+      scene.background.setHex(_cA.setHex(a.sky).lerp(_cB.setHex(b.sky), f).getHex());
+      scene.fog.color.setHex(_cA.setHex(a.fog).lerp(_cB.setHex(b.fog), f).getHex());
+      lampMat.emissiveIntensity = 0.3 + lerp(a.night, b.night) * 2.2;
+      cloudMat.color.lerpColors(_cA.setHex(0xffffff), _cB.setHex(0x2a3a55), lerp(a.night, b.night));
+      this.nightFactor = lerp(a.night, b.night);
+    },
+    update(dt) { this.setTime(this.time + dt / DAY_LENGTH); },
+  };
+  dayNight.setTime(dayNight.time);
+
   scene.add(group);
-  return { group, sun, ocean, clouds, colliders, buildings };
+  return { group, sun, hemi, ocean, clouds, colliders, buildings, dayNight, lampMat };
 }
 
-// Per-frame city animation: clouds drift, ocean gently bobs.
+// Per-frame city animation: clouds drift, ocean gently bobs, day/night advances.
 export function updateCity(city, delta, time) {
   if (!city) return;
+  if (city.dayNight) city.dayNight.update(delta);
   for (const cloud of city.clouds) {
     cloud.position.x += cloud.userData.speed * delta;
     if (cloud.position.x > 380) cloud.position.x = -380;

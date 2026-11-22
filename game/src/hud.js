@@ -207,10 +207,10 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
-  // Controls hint: add the v2 keys (garage G, radio C).
+  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · G garage · C radio';
+    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio';
   }
 
   let lastObjective = '';

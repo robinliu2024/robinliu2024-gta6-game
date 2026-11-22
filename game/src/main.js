@@ -229,6 +229,9 @@ function animate() {
   if (!state.paused) {
     state.playSeconds += delta;
     updateCity(city, delta, elapsed);
+    // v2: day/night cycle drives the vehicles' headlights (lamps, beams,
+    // and the driven car's spotlight) — updateCity advanced the cycle above.
+    vehicles.setNight(city.dayNight ? city.dayNight.nightFactor : 0);
     effects.update(delta);
     // Garage toggle (G) — v2: handled outside the garageOpen gate so G
     // closes the panel too. Opening freezes the world (see the gate below).

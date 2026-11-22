@@ -12,13 +12,50 @@ import { collideCircle } from './player.js';
 const MS_TO_MPH = 2.23694;
 const CAR_COLORS = [0xc23b2e, 0x2e6fc2, 0xe8b93c, 0x3aa655, 0x8a5fc2, 0xd8d8d8, 0x222831, 0xe07a3a];
 
+// Drivable / stealable vehicle types. maxSpeed/accel are m/s; turn is the
+// steering rate; radius is the collision circle; tough is how much speed a
+// ride keeps when it scrapes a building (bike bleeds speed, van shrugs it off).
+// Garage upgrades (speed/accel tracks) multiply these base stats.
+export const VEHICLE_TYPES = {
+  sedan:      { label: 'Sedan',      maxSpeed: 42, accel: 22, turn: 1.9,  radius: 1.6, tough: 1.0 },
+  coupe:      { label: 'Coupe',      maxSpeed: 46, accel: 25, turn: 2.0,  radius: 1.6, tough: 1.0 },
+  sports:     { label: 'Sports car', maxSpeed: 56, accel: 28, turn: 2.0,  radius: 1.6, tough: 0.9 },
+  motorcycle: { label: 'Motorcycle', maxSpeed: 50, accel: 30, turn: 2.7,  radius: 1.0, tough: 0.6 },
+  van:        { label: 'Van',        maxSpeed: 34, accel: 16, turn: 1.45, radius: 1.9, tough: 1.6 },
+};
+
+// Headlights for one vehicle: two lamps up front + a faint beam cone that
+// only shows at night (Vehicle.setNight drives the emissive + beam opacity).
+// The beam is a cone with its wide end forward, additive so it reads as light.
+function addHeadlights(g, zFront, y = 0.62, spread = 0.6) {
+  const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe9a0, emissiveIntensity: 0.7 });
+  for (const x of [-spread, spread]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.08), lightMat);
+    lamp.position.set(x, y, zFront);
+    g.add(lamp);
+  }
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xffe9a0, transparent: true, opacity: 0,
+    depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+  const beam = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 12, 1, true), beamMat);
+  beam.rotation.x = -Math.PI / 2; // apex at the lamps, wide end forward
+  beam.position.set(0, y, zFront + 3);
+  g.add(beam);
+  g.userData.headlampMat = lightMat;
+  g.userData.beamMat = beamMat;
+}
+
 function buildCarMesh(color, kind) {
   const g = new THREE.Group();
   g.name = 'solmar-car';
   const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.4 });
   const glassMat = new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.6 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.62, kind === 'coupe' ? 4.1 : 4.6), bodyMat);
-  body.position.y = 0.55;
+  const sports = kind === 'sports';
+  const bodyLen = sports ? 4.8 : kind === 'coupe' ? 4.1 : 4.6;
+  const bodyH = sports ? 0.5 : 0.62;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, bodyH, bodyLen), bodyMat);
+  body.position.y = sports ? 0.48 : 0.55;
   body.castShadow = true;
   g.add(body);
   g.userData.bodyMat = bodyMat; // garage paint recolors this material
@@ -26,6 +63,13 @@ function buildCarMesh(color, kind) {
   cabin.position.set(0, 1.08, kind === 'coupe' ? -0.25 : 0.1);
   cabin.castShadow = true;
   g.add(cabin);
+  if (sports) {
+    // Low rear spoiler on the sports car.
+    const spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.4), bodyMat);
+    spoiler.position.set(0, 0.95, -bodyLen / 2 + 0.25);
+    spoiler.castShadow = true;
+    g.add(spoiler);
+  }
   const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 12);
   const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
   for (const [x, z] of [[-0.95, 1.45], [0.95, 1.45], [-0.95, -1.45], [0.95, -1.45]]) {
@@ -34,19 +78,74 @@ function buildCarMesh(color, kind) {
     w.position.set(x, 0.36, z);
     g.add(w);
   }
-  const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe9a0, emissiveIntensity: 0.7 });
-  for (const x of [-0.6, 0.6]) {
-    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.08), lightMat);
-    lamp.position.set(x, 0.62, 2.32);
-    g.add(lamp);
-  }
+  addHeadlights(g, bodyLen / 2 + 0.02, sports ? 0.55 : 0.62);
   return g;
+}
+
+function buildMotorcycleMesh(color) {
+  const g = new THREE.Group();
+  g.name = 'solmar-bike';
+  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.5 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 2.2), bodyMat);
+  body.position.y = 0.55;
+  body.castShadow = true;
+  g.add(body);
+  g.userData.bodyMat = bodyMat;
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.22, 1.0), darkMat);
+  seat.position.set(0, 0.88, -0.3);
+  seat.castShadow = true;
+  g.add(seat);
+  const bars = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), darkMat);
+  bars.position.set(0, 1.02, 0.95);
+  g.add(bars);
+  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.18, 12);
+  for (const z of [0.85, -0.85]) {
+    const w = new THREE.Mesh(wheelGeo, darkMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(0, 0.36, z);
+    g.add(w);
+  }
+  addHeadlights(g, 1.12, 0.62, 0.14);
+  return g;
+}
+
+function buildVanMesh(color) {
+  const g = new THREE.Group();
+  g.name = 'solmar-van';
+  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.3 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.6 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.5, 5.0), bodyMat);
+  body.position.y = 1.05;
+  body.castShadow = true;
+  g.add(body);
+  g.userData.bodyMat = bodyMat;
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.7, 0.25), glassMat);
+  shield.position.set(0, 1.45, 2.4);
+  g.add(shield);
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.3, 12);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+  for (const [x, z] of [[-1.0, 1.6], [1.0, 1.6], [-1.0, -1.6], [1.0, -1.6]]) {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, 0.42, z);
+    g.add(w);
+  }
+  addHeadlights(g, 2.52, 0.7);
+  return g;
+}
+
+function buildVehicleMesh(color, kind) {
+  if (kind === 'motorcycle') return buildMotorcycleMesh(color);
+  if (kind === 'van') return buildVanMesh(color);
+  return buildCarMesh(color, kind);
 }
 
 export class Vehicle {
   constructor(scene, opts = {}) {
     this.kind = opts.kind || 'sedan';
-    this.mesh = buildCarMesh(opts.color ?? 0xc23b2e, this.kind);
+    this.stats = VEHICLE_TYPES[this.kind] || VEHICLE_TYPES.sedan;
+    this.mesh = buildVehicleMesh(opts.color ?? 0xc23b2e, this.kind);
     this.mesh.position.set(opts.x || 0, 0, opts.z || 0);
     this.mesh.rotation.y = opts.heading || 0;
     scene.add(this.mesh);
@@ -63,10 +162,17 @@ export class Vehicle {
     this.driver = null;          // 'player' | 'traffic' | null
     this.traffic = !!opts.traffic;
     this.trafficTarget = null;
-    this.trafficSpeed = 8 + Math.random() * 4;
+    this.trafficSpeed = this.stats.maxSpeed * (0.20 + Math.random() * 0.08);
   }
 
   get speedMph() { return Math.abs(this.speed) * MS_TO_MPH; }
+
+  // Headlights: lamp glow + beam cone scale with the night factor (0 = day).
+  setNight(f) {
+    const u = this.mesh.userData;
+    if (u.headlampMat) u.headlampMat.emissiveIntensity = 0.7 + f * 2.3;
+    if (u.beamMat) u.beamMat.opacity = f * 0.10;
+  }
 
   // Garage paint: recolor the body material (keeps the mesh otherwise).
   setPaint(color) {
@@ -110,25 +216,27 @@ export class Vehicle {
   }
 
   // Arcade driving: accel/brake/steer from input axes, handbrake drift.
-  // Garage upgrades (speed/accel tracks) apply only to the player's car.
+  // Garage upgrades (speed/accel tracks) apply only to the player's car,
+  // on top of this type's base stats.
   drive(dt, inp, colliders) {
+    const st = this.stats;
     const axes = inp.axes();
     const handbrake = !!inp.held.handbrake;
     const tuned = this.driver === 'player';
     const accelMul = tuned ? accelMultiplier() : 1;
     const topMul = tuned ? speedMultiplier() : 1;
-    const accel = axes.y > 0 ? TUNING.carAccel * accelMul : 0;
+    const accel = axes.y > 0 ? st.accel * accelMul : 0;
     const braking = axes.y < 0;
     if (accel) this.speed += accel * dt;
     if (braking) {
       if (this.speed > 0.5) this.speed -= TUNING.carBrake * dt;
-      else this.speed -= TUNING.carAccel * accelMul * 0.45 * dt; // reverse
+      else this.speed -= st.accel * accelMul * 0.45 * dt; // reverse
     }
     if (!accel && !braking) this.speed *= Math.max(0, 1 - 0.9 * dt); // coast drag
     if (handbrake) this.speed *= Math.max(0, 1 - 2.2 * dt);
-    this.speed = Math.max(-12, Math.min(TUNING.carMaxSpeed * topMul, this.speed));
+    this.speed = Math.max(-12, Math.min(st.maxSpeed * topMul, this.speed));
     const steerInput = axes.x;
-    const steerTarget = steerInput * TUNING.carTurn * (handbrake ? 1.5 : 1);
+    const steerTarget = steerInput * st.turn * (handbrake ? 1.5 : 1);
     this.steer += (steerTarget - this.steer) * Math.min(1, dt * 8);
     const turnRate = this.steer * Math.min(1, Math.abs(this.speed) / 8) * Math.sign(this.speed || 1);
     this.heading += turnRate * dt * (handbrake ? 1.25 : 1);
@@ -138,7 +246,14 @@ export class Vehicle {
     this.position.z += fz * this.speed * dt;
     this.position.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.x));
     this.position.z = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.z));
-    collideCircle(this.position, 1.6, colliders);
+    const bx = this.position.x;
+    const bz = this.position.z;
+    collideCircle(this.position, st.radius, colliders);
+    const push = Math.hypot(this.position.x - bx, this.position.z - bz);
+    if (push > 0.05 && Math.abs(this.speed) > 1) {
+      // A real scrape: fragile rides bleed speed, tough ones shrug it off.
+      this.speed *= Math.max(0.4, 1 - 0.06 / st.tough);
+    }
     this.mesh.rotation.y = this.heading;
     state.speedMph = this.speedMph;
     state.distanceDriven += Math.abs(this.speed) * dt;
@@ -169,7 +284,7 @@ export class Vehicle {
     this.speed += ((this.trafficSpeed - this.speed) * Math.min(1, dt));
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.z += Math.cos(this.heading) * this.speed * dt;
-    collideCircle(this.position, 1.6, colliders);
+    collideCircle(this.position, this.stats.radius, colliders);
     this.mesh.rotation.y = this.heading;
   }
 }
@@ -181,13 +296,31 @@ export class VehicleManager {
     this.rng = makeRng(opts.seed ?? 1);
     this.lowQuality = !!opts.lowQuality;
     this.colliders = opts.colliders || [];
+    this.nightFactor = 0;
+    // One real spotlight for the player's headlights at night (three r160
+    // physical lights: intensity is in candela). It follows the driven car.
+    this.headlight = new THREE.SpotLight(0xffe9a0, 0, 45, 0.55, 0.6, 1.2);
+    this.headlight.visible = false;
+    scene.add(this.headlight);
+    scene.add(this.headlight.target);
     this._spawnParked();
     this._spawnTraffic();
+  }
+
+  // Night factor from the day/night cycle (0 = day, 1 = night): lamp glow +
+  // beam cones on every vehicle. Skips the loop when nothing changed.
+  setNight(f) {
+    if (Math.abs(f - this.nightFactor) < 0.005) return;
+    this.nightFactor = f;
+    for (const v of this.vehicles) v.setNight(f);
   }
 
   _spawnParked() {
     const lines = roadLines();
     const count = this.lowQuality ? 8 : 14;
+    // First three slots guarantee one of each new type is parked to steal.
+    const parkedKinds = ['motorcycle', 'sports', 'van', 'sedan', 'sedan', 'coupe',
+      'sports', 'motorcycle', 'van', 'sedan', 'coupe', 'sedan', 'sports', 'van'];
     for (let i = 0; i < count; i++) {
       const line = lines[Math.floor(this.rng() * lines.length)];
       const along = -CITY.halfSize + 40 + this.rng() * (CITY.halfSize * 2 - 80);
@@ -196,6 +329,7 @@ export class VehicleManager {
       const z = horizontal ? line + 5.2 : along;
       const v = new Vehicle(this.scene, {
         x, z, heading: horizontal ? Math.PI / 2 : 0,
+        kind: parkedKinds[i % parkedKinds.length],
         color: CAR_COLORS[Math.floor(this.rng() * CAR_COLORS.length)],
         parked: true, id: `parked-${i}`,
       });
@@ -213,6 +347,8 @@ export class VehicleManager {
 
   _spawnTraffic() {
     const count = this.lowQuality ? 3 : 6;
+    // First two slots guarantee the new types are also out in traffic.
+    const trafficKinds = ['sports', 'motorcycle', 'sedan', 'van', 'coupe', 'sedan'];
     for (let i = 0; i < count; i++) {
       const lines = roadLines();
       const line = lines[Math.floor(this.rng() * lines.length)];
@@ -221,6 +357,7 @@ export class VehicleManager {
       const v = new Vehicle(this.scene, {
         x: horizontal ? along : line, z: horizontal ? line : along,
         heading: horizontal ? Math.PI / 2 : 0,
+        kind: trafficKinds[i % trafficKinds.length],
         color: CAR_COLORS[Math.floor(this.rng() * CAR_COLORS.length)],
         parked: false, traffic: true, id: `traffic-${i}`,
       });
@@ -234,6 +371,7 @@ export class VehicleManager {
       x, z, heading, kind, color: 0xe8b93c,
       parked: true, isMissionCar: true, id: `mission-${kind}`,
     });
+    v.setNight(this.nightFactor);
     this.vehicles.push(v);
     return v;
   }
@@ -255,6 +393,18 @@ export class VehicleManager {
     }
     // Keep the shared speed readout honest when on foot.
     if (player && player.onFoot) state.speedMph = 0;
+    // Player headlight: the spotlight follows the driven car at night.
+    const pv = player && player.vehicle;
+    const on = !!pv && this.nightFactor > 0.05;
+    this.headlight.visible = on;
+    if (on) {
+      this.headlight.intensity = this.nightFactor * 120;
+      const h = pv.heading;
+      this.headlight.position.set(
+        pv.position.x + Math.sin(h) * 2, 1.2, pv.position.z + Math.cos(h) * 2);
+      this.headlight.target.position.set(
+        pv.position.x + Math.sin(h) * 18, 0.4, pv.position.z + Math.cos(h) * 18);
+    }
   }
 }
 
