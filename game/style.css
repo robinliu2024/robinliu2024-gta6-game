@@ -51,6 +51,10 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: 
 #hud-controls { position: absolute; bottom: 14px; left: 14px; font-size: 12px;
   color: rgba(255, 255, 255, 0.65); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
 
+/* Weapon bar (created by hud.js): sits above the controls hint line so the
+   two never overlap — the bar is ~28px tall, the hint ~16px at bottom 14px. */
+#hud-weapons { bottom: 42px !important; }
+
 /* Full-screen menus */
 .screen { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
   background: linear-gradient(160deg, rgba(6, 10, 18, 0.82), rgba(20, 8, 30, 0.72)); }

@@ -57,7 +57,7 @@ export function createHud(deps = {}) {
     weaponEl = document.createElement('div');
     weaponEl.id = 'hud-weapons';
     weaponEl.style.cssText = [
-      'position:absolute', 'left:18px', 'bottom:18px',
+      'position:absolute', 'left:18px', 'bottom:42px',
       'display:flex', 'gap:8px', 'align-items:flex-end',
       'font-family:inherit', 'pointer-events:none',
     ].join(';');

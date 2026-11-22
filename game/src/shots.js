@@ -3,13 +3,17 @@
 // ?shot=drive  player driving at speed on a Downtown road
 // ?shot=chase  wanted 3, SBPD interceptors on the player's bumper
 // ?shot=mission  on foot near the mission beacon, objective visible
+// ?shot=heli  wanted 4 helicopter chase (cover shot): low tracking camera
+// ?shot=combat  on foot Downtown, rifle out, interceptors closing in
+// ?shot=race  M6 street race, rolling toward checkpoint 1/4
+// ?shot=garage  garage menu open over the live game, HUD visible
 // &seed= seeds the RNG, &lq=1 lowers quality. Each setup places the game in
 // a readable, good-looking state with no user input required.
 
 import { DISTRICTS } from './config.js';
 import { state, setWanted } from './state.js';
 
-export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission'];
+export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission', 'heli', 'combat', 'race', 'garage'];
 
 function putPlayerInCar(ctx, x, z, heading, speed) {
   const { player, vehicles } = ctx;
@@ -93,6 +97,92 @@ export function applyShotSetup(name, ctx) {
     // Re-assert the wanted level and speed after the warm-up (ramming slows).
     setWanted(3);
     if (player.vehicle) player.vehicle.speed = 24;
+    return setup;
+  }
+
+  if (name === 'heli') {
+    // Four-star helicopter chase (cover shot): the heli spawns at wanted 4
+    // and the roadblock at wanted 3, so warm up until both close in.
+    putPlayerInCar(ctx, 64, 110, Math.PI, 24);
+    setWanted(4);
+    setup.autoDrive = true;
+    setup.camYaw = 0;
+    setup.camPitch = 0.3;
+    if (missions) missions.startMission('m8');
+    // Keep the m8 beacon out of the frame: this shot is about the tail.
+    if (missions) missions.beacon.visible = false;
+    warmUpChase(ctx, 6);
+    // Re-assert the wanted level and speed after the warm-up (ramming slows).
+    setWanted(4);
+    if (player.vehicle) player.vehicle.speed = 24;
+    // The heli hovers at 58 m: a follow camera can never frame both it and
+    // the car, so this shot owns the camera — a low angle with a wider FOV
+    // that tracks the midpoint between car and heli every frame.
+    if (camera) {
+      camera.fov = 85;
+      camera.updateProjectionMatrix();
+    }
+    setup.cameraFn = (cam) => {
+      const p = player.vehicle ? player.vehicle.position : player.position;
+      const h = police.heli ? police.heli.position : { x: p.x + 12, y: 58, z: p.z + 8 };
+      cam.position.set(p.x + 9, 4, p.z + 34);
+      cam.lookAt((p.x + h.x) / 2 - 2, 18, (p.z + h.z) / 2);
+    };
+    return setup;
+  }
+
+  if (name === 'combat') {
+    // On foot at the x=64 / z=64 intersection, rifle out, two stars:
+    // interceptors close in along open roads while the weapon bar, stars
+    // and M7 objective all read in the HUD.
+    putPlayerOnFoot(ctx, 64, 64, Math.PI);
+    if (player.selectWeapon) player.selectWeapon('rifle');
+    setWanted(2);
+    if (missions) missions.startMission('m7');
+    warmUpChase(ctx, 4);
+    // Face the nearest cop so the threat reads in the frame, camera behind.
+    const cops = police ? police.cops.filter((c) => !c.down) : [];
+    let best = null;
+    let bestD = Infinity;
+    for (const cop of cops) {
+      const d = Math.hypot(cop.position.x - player.position.x, cop.position.z - player.position.z);
+      if (d < bestD) { bestD = d; best = cop; }
+    }
+    if (best) {
+      const dx = best.position.x - player.position.x;
+      const dz = best.position.z - player.position.z;
+      player.heading = Math.atan2(dx, dz);
+      player.mesh.rotation.y = player.heading;
+      setup.camYaw = Math.atan2(-dx, -dz);
+    } else {
+      setup.camYaw = 0;
+    }
+    setup.camPitch = 0.3;
+    return setup;
+  }
+
+  if (name === 'race') {
+    // M6 street race: rolling north on the x=64 Downtown road toward the
+    // checkpoint beacon, race clock running, HUD shows M6 + checkpoint 1/4.
+    putPlayerInCar(ctx, 64, 150, Math.PI, 20);
+    setup.autoDrive = true;
+    setup.camYaw = 0;
+    setup.camPitch = 0.3;
+    if (missions) missions.startMission('m6');
+    return setup;
+  }
+
+  if (name === 'garage') {
+    // Garage menu over the live game: car parked on a Downtown road, M1
+    // running, HUD visible around the centered panel. The world is frozen
+    // while the garage is open, so the camera is posed here and stays put.
+    putPlayerInCar(ctx, 64, 110, Math.PI, 0);
+    if (missions) missions.startMission('m1');
+    if (camera) {
+      camera.position.set(24, 22, 178);
+      camera.lookAt(30, 2, 100);
+    }
+    if (ctx.openGarage) ctx.openGarage();
     return setup;
   }
 

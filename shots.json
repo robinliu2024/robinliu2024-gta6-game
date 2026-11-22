@@ -1,18 +1,22 @@
 [
   {
+    "description": "Cover: four-star helicopter chase — SBPD helicopter overhead with its searchlight on the player's car, interceptors behind, M8 objective, four wanted stars, speed and minimap in the HUD.",
     "name": "1-chase.jpg",
-    "query": "?shot=chase&seed=1"
+    "query": "?shot=heli&seed=1"
   },
   {
+    "description": "Weapon combat on foot Downtown: Rico with the rifle out (weapon bar shows Rifle 30/90), crosshair, a police interceptor closing in, M7 Vault Job objective and two wanted stars.",
     "name": "2-drive.jpg",
-    "query": "?shot=drive&seed=1"
+    "query": "?shot=combat&seed=1"
   },
   {
+    "description": "M6 Solmar Grand Prix street race in progress: driving at speed down a Downtown road toward checkpoint 1/4, race briefing in the objective bar, checkpoint beacon marked on the minimap.",
     "name": "3-mission.jpg",
-    "query": "?shot=mission&seed=1"
+    "query": "?shot=race&seed=1"
   },
   {
+    "description": "Solmar Garage menu open over the live game: Top Speed / Acceleration / Armor upgrades and paint options, with the full HUD (money, debt, REP, M1 objective, stars, minimap) visible around the panel.",
     "name": "4-start.jpg",
-    "query": "?shot=start&seed=1"
+    "query": "?shot=garage&seed=1"
   }
 ]

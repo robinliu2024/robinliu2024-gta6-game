@@ -199,6 +199,7 @@ if (state.shot) {
   shotSetup = applyShotSetup(state.shot, {
     player, vehicles, police, missions, camera,
     hideStartScreen: () => show(startScreen, false),
+    openGarage: () => openGarage(),
   });
   if (shotSetup) {
     camYaw = shotSetup.camYaw;
@@ -330,7 +331,10 @@ function animate() {
       audio.engine(player.onFoot ? 0 : (player.vehicle ? player.vehicle.speedMph : 0));
       audio.siren(state.wanted > 0 && police.cops.length > 0);
       audio.heli(!!police.heli);
-      updateFollowCamera(delta);
+      // Shot mode: a setup may own the camera (the heli shot's low
+      // tracking angle); otherwise the normal follow camera runs.
+      if (shotSetup && shotSetup.cameraFn) shotSetup.cameraFn(camera);
+      else updateFollowCamera(delta);
       // Autosave every 15s while playing (save manager, part C).
       saveManager.autosave(delta, true);
       void saveTimer;
