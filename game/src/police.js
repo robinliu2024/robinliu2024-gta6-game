@@ -74,9 +74,37 @@ export class PoliceCar {
     this.speed = 0;
     this.bustTimer = 0;
     this.alive = true;
+    // Combat: cops can be shot. 100 HP — pistol 3 hits, shotgun ~1 close
+    // blast, rifle 4 hits. A downed cop stops chasing and stops busting.
+    this.health = 100;
+    this.maxHealth = 100;
+    this.down = false;
+    this.aimHeight = 1.0;  // ray-test centre height (combat.js)
+    this.radius = 1.8;     // ray-test sphere radius (the car is a big target)
+  }
+
+  // Returns 'down' when this shot neutralizes the cop, 'hit' when it only
+  // wounds, null when already down.
+  takeDamage(amount) {
+    if (this.down) return null;
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.health = 0;
+      this.down = true;
+      this.speed = 0;
+      this.bustTimer = 0;
+      // Slump: lights off, car lists to one side.
+      const [r, b] = this.mesh.userData.lights || [];
+      if (r) r.material.emissiveIntensity = 0.1;
+      if (b) b.material.emissiveIntensity = 0.1;
+      this.mesh.rotation.z = 0.12;
+      return 'down';
+    }
+    return 'hit';
   }
 
   update(dt, targetPos, targetOnFoot, colliders, time) {
+    if (this.down) return this.position.distanceTo(targetPos);
     const to = targetPos.clone().sub(this.position);
     to.y = 0;
     const dist = to.length();
@@ -162,6 +190,7 @@ export class PoliceManager {
     const dists = [];
     for (const cop of this.cops) {
       const dist = cop.update(dt, targetPos, player.onFoot, this.colliders, time);
+      if (cop.down) continue; // downed cops stop chasing, ramming and busting
       dists.push(dist);
       // Ram: a cop hitting the player's car slows it and hurts the player a little.
       if (inCar && dist < RAM_RANGE) {

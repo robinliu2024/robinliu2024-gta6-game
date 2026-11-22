@@ -67,6 +67,12 @@ world.missions = missions;
 // Part C systems: HUD, particles/skids/tracers/shake, save manager.
 const effects = new Effects(scene, { lowQuality: state.lowQuality });
 effects.subscribeToPlayer(player);
+// Combat targets: live cops (downed ones stop being targets) + living peds.
+// Mission gang members, when they exist, join this list the same way.
+player.setTargetProvider(() => [
+  ...police.cops.filter((c) => !c.down),
+  ...pedestrians.peds.filter((p) => p.alive),
+]);
 const saveManager = createSaveManager({ getMissions: () => missions });
 
 // Dialogue lines surface through the objective bar (HUD wiring lands in part C).
@@ -217,18 +223,37 @@ function animate() {
           }
         }
       }
+      // Weapon keys: 1/2/3 switch, mouse wheel cycles, R reloads.
+      if (input.wasPressed('weapon1') && player.selectWeapon('pistol')) audio.click();
+      if (input.wasPressed('weapon2') && player.selectWeapon('shotgun')) audio.click();
+      if (input.wasPressed('weapon3') && player.selectWeapon('rifle')) audio.click();
+      const wheel = input.consumeWheel();
+      if (wheel !== 0 && player.onFoot && player.cycleWeapon(wheel > 0 ? 1 : -1)) audio.click();
+      if (input.wasPressed('reload') && player.onFoot && player.reloadWeapon()) audio.reload();
       // Shoot (mouse click; first click captures the pointer instead).
-      if (input.mouseClicked) {
-        if (!input.pointerLocked) input.requestPointerLock();
-        else if (player.onFoot) {
-          if (player.shoot(camera)) {
-            audio.gunshot();
-            pedestrians.scareAll(player.position, 45);
-            if (elapsed - lastShotCrimeAt > 5) {
-              lastShotCrimeAt = elapsed;
-              police.commitCrime(1);
+      // Semi-auto weapons fire on click; the rifle fires while held.
+      if (input.mouseClicked && !input.pointerLocked) input.requestPointerLock();
+      const wantFire = player.onFoot && input.pointerLocked
+        && (player.combat.current.auto ? input.mouseDown : input.mouseClicked);
+      if (wantFire) {
+        const res = player.shoot(camera);
+        if (res && res.fired) {
+          audio.gunshot(res.weapon.id);
+          effects.shake(res.weapon.shake);
+          pedestrians.scareAll(player.position, 45);
+          if (elapsed - lastShotCrimeAt > 5) {
+            lastShotCrimeAt = elapsed;
+            police.commitCrime(1);
+          }
+          for (const hit of res.hits) {
+            if (hit.result === 'down') {
+              state.kills += 1;
+              police.commitCrime(2);
+              pedestrians.scareAll(player.position, 40);
             }
           }
+        } else if (res && res.empty) {
+          audio.dryFire();
         }
       }
       player.update(delta, input, camYaw, city.colliders);
@@ -272,6 +297,7 @@ window.__game = {
   renderer,
   city,
   player,
+  combat: player.combat,
   vehicles,
   pedestrians,
   police,

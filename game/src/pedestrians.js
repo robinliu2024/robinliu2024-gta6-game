@@ -54,8 +54,26 @@ export class Pedestrian {
     this.target = null;
     this.walkPhase = rng() * 6;
     this.alive = true;
+    // Combat: 100 HP, same target interface as police (combat.js).
+    this.health = 100;
+    this.maxHealth = 100;
+    this.aimHeight = 1.1;
+    this.radius = 0.6;
     this.scene = scene;
     this._pickTarget(rng);
+  }
+
+  // Returns 'down' when this shot neutralizes the ped, 'hit' when it only
+  // wounds, null when already down.
+  takeDamage(amount) {
+    if (!this.alive) return null;
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.health = 0;
+      this.knockDown();
+      return 'down';
+    }
+    return 'hit';
   }
 
   _pickTarget(rng) {

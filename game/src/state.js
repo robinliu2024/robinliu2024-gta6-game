@@ -22,6 +22,16 @@ export function createInitialState() {
     carsStolen: 0,
     distanceDriven: 0,
     playSeconds: 0,
+    // Weapon system (combat.js): current weapon + mag/reserve ammo per tier.
+    // Runtime-only, not saved — a fresh run starts with a full loadout.
+    weapons: {
+      current: 'pistol',
+      ammo: {
+        pistol: { mag: 12, reserve: 48 },
+        shotgun: { mag: 6, reserve: 24 },
+        rifle: { mag: 30, reserve: 90 },
+      },
+    },
     // Runtime-only refs (never saved): filled in by main.js / gameplay parts.
     player: null,   // { position, heading, onFoot, vehicle }
     car: null,      // currently driven vehicle, if any

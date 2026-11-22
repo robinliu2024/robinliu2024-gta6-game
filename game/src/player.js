@@ -6,12 +6,11 @@
 import * as THREE from 'three';
 import { CITY, TUNING, PLAYER_HEALTH } from './config.js';
 import { state, damagePlayer, healPlayer } from './state.js';
+import { Combat } from './combat.js';
 
 const PUNCH_RANGE = 2.2;
 const PUNCH_DAMAGE = 25;
 const PUNCH_COOLDOWN = 0.45;
-const SHOT_COOLDOWN = 0.22;
-const SHOT_RANGE = 90;
 
 function clampToCity(v) {
   v.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, v.x));
@@ -89,12 +88,20 @@ export class Player {
     this.vehicle = null;
     this.wasted = false;
     this.punchTimer = 0;
-    this.shotTimer = 0;
     this.walkPhase = 0;
     this.health = state.health;
+    this.combat = new Combat();   // weapon system: pistol / shotgun / rifle
+    this._targetProvider = null;  // fn() -> shootable targets, set by main.js
     this._shootListeners = [];
     this._punchListeners = [];
   }
+
+  // main.js supplies the live target list (cops, pedestrians, gang members).
+  setTargetProvider(fn) { this._targetProvider = fn; }
+
+  selectWeapon(id) { return this.combat.select(id); }
+  cycleWeapon(dir) { return this.combat.cycle(dir); }
+  reloadWeapon() { return this.combat.startReload(); }
 
   // Effects (part C) subscribes: onShoot(({from, dir, hitPoint}) => ...)
   onShoot(fn) { this._shootListeners.push(fn); return () => { this._shootListeners = this._shootListeners.filter((f) => f !== fn); }; }
@@ -115,21 +122,29 @@ export class Player {
     tick();
   }
 
+  // Fire the current weapon. Returns the combat result object when a shot
+  // went off (truthy), or false when it could not fire (cooldown, empty,
+  // reloading, in a car, wasted). Empty mag returns { fired:false, empty:true }
+  // so the caller can play a dry-fire click.
   shoot(camera) {
-    if (!this.onFoot || this.wasted || this.shotTimer > 0) return false;
-    this.shotTimer = SHOT_COOLDOWN;
+    if (!this.onFoot || this.wasted) return false;
     const from = this.position.clone().add(new THREE.Vector3(0, 1.5, 0));
     const dir = new THREE.Vector3();
     if (camera) camera.getWorldDirection(dir);
     else dir.set(Math.sin(this.heading), 0, Math.cos(this.heading));
-    const to = from.clone().add(dir.clone().multiplyScalar(SHOT_RANGE));
-    const evt = { from, dir, to, range: SHOT_RANGE };
+    const targets = this._targetProvider ? this._targetProvider() : [];
+    const res = this.combat.fire(from, dir, targets);
+    if (!res.fired) return res;
+    const evt = {
+      from, dir, to: res.endPoint, range: res.weapon.range,
+      weapon: res.weapon.id, hits: res.hits,
+    };
     if (this._shootListeners.length) {
       for (const fn of this._shootListeners) { try { fn(evt); } catch { /* listener error must not break shooting */ } }
     } else {
-      this._fallbackTracer(from, to);
+      this._fallbackTracer(from, res.endPoint);
     }
-    return true;
+    return res;
   }
 
   punch(targets) {
@@ -178,9 +193,9 @@ export class Player {
   }
 
   update(dt, inp, cameraYaw, colliders) {
+    this.combat.update(dt); // reload / fire cooldown keep ticking in a car too
     if (this.wasted || !this.onFoot) return;
     this.punchTimer = Math.max(0, this.punchTimer - dt);
-    this.shotTimer = Math.max(0, this.shotTimer - dt);
     const axes = inp.axes();
     const sprint = inp.sprinting;
     const speed = sprint ? TUNING.runSpeed : TUNING.walkSpeed;

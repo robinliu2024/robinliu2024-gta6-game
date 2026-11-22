@@ -12,6 +12,8 @@ const KEY_ALIASES = {
   KeyE: 'enter',
   KeyQ: 'punch', KeyF: 'punch',
   KeyP: 'pause', Escape: 'pause',
+  Digit1: 'weapon1', Digit2: 'weapon2', Digit3: 'weapon3',
+  KeyR: 'reload',
 };
 
 class Input {
@@ -22,6 +24,7 @@ class Input {
     this.mouseDY = 0;
     this.mouseDown = false;  // left button held (shoot)
     this.mouseClicked = false; // left button pressed this frame
+    this.wheelDelta = 0;     // accumulated wheel steps since last consume
     this.pointerLocked = false;
     this.onPause = null;     // callback assigned by main.js
     this._listeners = [];
@@ -30,6 +33,7 @@ class Input {
     this._onMouseMove = this._onMouseMove.bind(this);
     this._onMouseDown = this._onMouseDown.bind(this);
     this._onMouseUp = this._onMouseUp.bind(this);
+    this._onWheel = this._onWheel.bind(this);
     this._onLockChange = this._onLockChange.bind(this);
     this._attach();
   }
@@ -40,6 +44,7 @@ class Input {
     window.addEventListener('mousemove', this._onMouseMove);
     window.addEventListener('mousedown', this._onMouseDown);
     window.addEventListener('mouseup', this._onMouseUp);
+    window.addEventListener('wheel', this._onWheel, { passive: true });
     document.addEventListener('pointerlockchange', this._onLockChange);
   }
 
@@ -73,6 +78,12 @@ class Input {
     if (e.button === 0) this.mouseDown = false;
   }
 
+  _onWheel(e) {
+    // One weapon step per wheel notch, either direction.
+    if (!e.deltaY) return;
+    this.wheelDelta += e.deltaY > 0 ? 1 : -1;
+  }
+
   _onLockChange() {
     this.pointerLocked = document.pointerLockElement === document.body
       || document.pointerLockElement === document.getElementById('game-canvas');
@@ -103,6 +114,14 @@ class Input {
     return d;
   }
 
+  // Consume accumulated wheel steps (call once per frame): +1 = next weapon,
+  // -1 = previous weapon, 0 = no wheel movement this frame.
+  consumeWheel() {
+    const d = this.wheelDelta;
+    this.wheelDelta = 0;
+    return d;
+  }
+
   // True once, on the frame the action key went down.
   wasPressed(action) { return !!this.pressed[action]; }
 
@@ -110,6 +129,7 @@ class Input {
   endFrame() {
     this.pressed = {};
     this.mouseClicked = false;
+    this.wheelDelta = 0;
   }
 
   dispose() {
@@ -118,6 +138,7 @@ class Input {
     window.removeEventListener('mousemove', this._onMouseMove);
     window.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('mouseup', this._onMouseUp);
+    window.removeEventListener('wheel', this._onWheel);
     document.removeEventListener('pointerlockchange', this._onLockChange);
   }
 }

@@ -89,9 +89,25 @@ class AudioEngine {
 
   click() { this._tone(880, 0.06, 'square', 0.12); }
 
-  gunshot() {
-    this._noise(0.14, 0.55, 3000);
-    this._tone(160, 0.1, 'square', 0.25, 60);
+  gunshot(weaponId = 'pistol') {
+    // Per-weapon report: pistol cracks, shotgun booms, rifle snaps.
+    if (weaponId === 'shotgun') {
+      this._noise(0.28, 0.7, 1400);
+      this._tone(110, 0.22, 'square', 0.35, 45);
+    } else if (weaponId === 'rifle') {
+      this._noise(0.1, 0.5, 4200);
+      this._tone(220, 0.07, 'square', 0.22, 70);
+    } else {
+      this._noise(0.14, 0.55, 3000);
+      this._tone(160, 0.1, 'square', 0.25, 60);
+    }
+  }
+
+  dryFire() { this._tone(1200, 0.04, 'square', 0.12); }
+
+  reload() {
+    this._tone(500, 0.05, 'square', 0.12);
+    setTimeout(() => this._tone(700, 0.05, 'square', 0.12), 140);
   }
 
   punch() { this._noise(0.08, 0.3, 800); }

@@ -50,6 +50,41 @@ export function createHud(deps = {}) {
   }
   refs.speed = speedEl;
 
+  // Weapon bar + ammo readout (combat, part B v2), created once.
+  let weaponEl = el('hud-weapons');
+  if (!weaponEl && refs.hud) {
+    weaponEl = document.createElement('div');
+    weaponEl.id = 'hud-weapons';
+    weaponEl.style.cssText = [
+      'position:absolute', 'left:18px', 'bottom:18px',
+      'display:flex', 'gap:8px', 'align-items:flex-end',
+      'font-family:inherit', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(weaponEl);
+  }
+  refs.weapons = weaponEl;
+
+  // Crosshair, shown only while on foot with the pointer locked.
+  let crossEl = el('hud-crosshair');
+  if (!crossEl && refs.hud) {
+    crossEl = document.createElement('div');
+    crossEl.id = 'hud-crosshair';
+    crossEl.style.cssText = [
+      'position:absolute', 'left:50%', 'top:50%',
+      'width:22px', 'height:22px', 'margin:-11px 0 0 -11px',
+      'pointer-events:none', 'display:none',
+    ].join(';');
+    crossEl.innerHTML = [
+      '<div style="position:absolute;left:10px;top:0;width:2px;height:7px;background:#fff;box-shadow:0 0 3px #000;"></div>',
+      '<div style="position:absolute;left:10px;bottom:0;width:2px;height:7px;background:#fff;box-shadow:0 0 3px #000;"></div>',
+      '<div style="position:absolute;top:10px;left:0;width:7px;height:2px;background:#fff;box-shadow:0 0 3px #000;"></div>',
+      '<div style="position:absolute;top:10px;right:0;width:7px;height:2px;background:#fff;box-shadow:0 0 3px #000;"></div>',
+      '<div style="position:absolute;left:10px;top:10px;width:2px;height:2px;background:#ffd23f;"></div>',
+    ].join('');
+    refs.hud.appendChild(crossEl);
+  }
+  refs.crosshair = crossEl;
+
   // Minimap canvas, drawn over the round #minimap div.
   let mapCanvas = el('minimap-canvas');
   if (!mapCanvas && refs.minimap) {
@@ -184,6 +219,32 @@ export function createHud(deps = {}) {
     if (refs.speed) {
       const mph = player && player.vehicle ? Math.round(player.vehicle.speedMph) : 0;
       refs.speed.textContent = player && !player.onFoot ? `${mph} MPH` : '';
+    }
+    // Weapon slots + ammo (combat): three slots, active one highlighted.
+    if (refs.weapons && player && player.combat) {
+      const c = player.combat;
+      const order = ['pistol', 'shotgun', 'rifle'];
+      const labels = { pistol: '1 PISTOL', shotgun: '2 SHOTGUN', rifle: '3 RIFLE' };
+      const names = { pistol: 'Pistol', shotgun: 'Shotgun', rifle: 'Rifle' };
+      let html = '';
+      for (const id of order) {
+        const a = c.ammo(id);
+        const active = c.currentId === id;
+        html += `<div style="padding:4px 8px;border-radius:4px;background:${active ? 'rgba(255,210,63,0.9)' : 'rgba(0,0,0,0.55)'};color:${active ? '#111' : '#ddd'};font-size:12px;font-weight:${active ? 800 : 600};text-shadow:none;">${labels[id]} <span style="opacity:${active ? 1 : 0.75}">${a.mag}/${a.reserve}</span></div>`;
+      }
+      const status = c.reloading
+        ? 'RELOADING…'
+        : c.isEmpty
+          ? (c.reserve > 0 ? 'EMPTY — PRESS R' : 'NO AMMO')
+          : `${names[c.currentId].toUpperCase()} ${c.mag}/${c.reserve}`;
+      html += `<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:${c.isEmpty ? '#ff7d7d' : '#fff'};font-size:14px;font-weight:800;">${status}</div>`;
+      if (refs.weapons.innerHTML !== html) refs.weapons.innerHTML = html;
+      refs.weapons.style.display = player.onFoot ? 'flex' : 'none';
+    }
+    // Crosshair: on foot, started, not game over.
+    if (refs.crosshair) {
+      const show = !!player && player.onFoot && state.started && !state.gameOver && !state.paused;
+      refs.crosshair.style.display = show ? 'block' : 'none';
     }
     drawMinimap();
   }
