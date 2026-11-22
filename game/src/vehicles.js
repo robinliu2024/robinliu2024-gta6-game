@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { CITY, TUNING, makeRng } from './config.js';
 import { state, setWanted } from './state.js';
+import { speedMultiplier, accelMultiplier, applyPaintTo } from './garage.js';
 import { roadLines, nearestRoadPoint } from './city.js';
 import { collideCircle } from './player.js';
 
@@ -20,6 +21,7 @@ function buildCarMesh(color, kind) {
   body.position.y = 0.55;
   body.castShadow = true;
   g.add(body);
+  g.userData.bodyMat = bodyMat; // garage paint recolors this material
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, kind === 'coupe' ? 1.9 : 2.3), glassMat);
   cabin.position.set(0, 1.08, kind === 'coupe' ? -0.25 : 0.1);
   cabin.castShadow = true;
@@ -66,6 +68,18 @@ export class Vehicle {
 
   get speedMph() { return Math.abs(this.speed) * MS_TO_MPH; }
 
+  // Garage paint: recolor the body material (keeps the mesh otherwise).
+  setPaint(color) {
+    const mat = this.mesh.userData.bodyMat;
+    if (!mat) return false;
+    if (mat.color && typeof mat.color === 'object' && typeof mat.color.setHex === 'function') {
+      mat.color.setHex(color);
+    } else {
+      mat.color = color;
+    }
+    return true;
+  }
+
   enter(player) {
     this.driver = 'player';
     this.parked = false;
@@ -96,19 +110,23 @@ export class Vehicle {
   }
 
   // Arcade driving: accel/brake/steer from input axes, handbrake drift.
+  // Garage upgrades (speed/accel tracks) apply only to the player's car.
   drive(dt, inp, colliders) {
     const axes = inp.axes();
     const handbrake = !!inp.held.handbrake;
-    const accel = axes.y > 0 ? TUNING.carAccel : 0;
+    const tuned = this.driver === 'player';
+    const accelMul = tuned ? accelMultiplier() : 1;
+    const topMul = tuned ? speedMultiplier() : 1;
+    const accel = axes.y > 0 ? TUNING.carAccel * accelMul : 0;
     const braking = axes.y < 0;
     if (accel) this.speed += accel * dt;
     if (braking) {
       if (this.speed > 0.5) this.speed -= TUNING.carBrake * dt;
-      else this.speed -= TUNING.carAccel * 0.45 * dt; // reverse
+      else this.speed -= TUNING.carAccel * accelMul * 0.45 * dt; // reverse
     }
     if (!accel && !braking) this.speed *= Math.max(0, 1 - 0.9 * dt); // coast drag
     if (handbrake) this.speed *= Math.max(0, 1 - 2.2 * dt);
-    this.speed = Math.max(-12, Math.min(TUNING.carMaxSpeed, this.speed));
+    this.speed = Math.max(-12, Math.min(TUNING.carMaxSpeed * topMul, this.speed));
     const steerInput = axes.x;
     const steerTarget = steerInput * TUNING.carTurn * (handbrake ? 1.5 : 1);
     this.steer += (steerTarget - this.steer) * Math.min(1, dt * 8);
@@ -190,6 +208,7 @@ export class VehicleManager {
     });
     this.vehicles.push(starter);
     this.starterCar = starter;
+    applyPaintTo(starter); // re-apply the saved paint (default teal on a new game)
   }
 
   _spawnTraffic() {

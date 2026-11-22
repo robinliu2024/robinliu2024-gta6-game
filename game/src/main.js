@@ -5,7 +5,7 @@
 
 import * as THREE from 'three';
 import { GAME_TITLE, hashSeed } from './config.js';
-import { state, currentObjective, applySave, loadSave, saveGame } from './state.js';
+import { state, currentObjective, applySave, loadSave, saveGame, addRep } from './state.js';
 import { buildCity, updateCity, spawnPoint, districtAt } from './city.js';
 import { input } from './input.js';
 import { Player } from './player.js';
@@ -17,6 +17,7 @@ import { audio } from './audio.js';
 import { createHud } from './hud.js';
 import { Effects } from './effects.js';
 import { createSaveManager } from './save.js';
+import { createGarageUI, applyPaintTo, RACE_WIN_BONUS_REP, NEAR_MISS_REP } from './garage.js';
 import { applyShotSetup } from './shots.js';
 
 // --- URL query parsing: ?shot=, &seed=, &lq=1. Stored for part 3 shot mode. ---
@@ -83,7 +84,18 @@ missions.onDialogue = (line) => {
   dialogueText = line;
   dialogueAt = elapsed;
 };
-missions.onComplete = (mission) => { audio.sting(); saveGame(); };
+// v2: mission REP is already awarded by completeMission; show the gain and
+// the street-race (m6) win bonus. Never gates the m1->m9 auto-advance.
+missions.onComplete = (mission) => {
+  let msg = `+${mission.rep} REP — ${mission.name} complete`;
+  if (mission.id === 'm6') {
+    addRep(RACE_WIN_BONUS_REP);
+    msg += ` · Race win bonus +${RACE_WIN_BONUS_REP} REP`;
+  }
+  audio.sting();
+  saveGame();
+  hud.toast(msg, 3500);
+};
 missions.onFail = () => { audio.fail(); };
 police.onBusted = () => { missions.failMission('busted'); audio.fail(); };
 police.onCrime = () => { audio.click(); };
@@ -98,6 +110,22 @@ const hud = createHud({
 });
 function updateHud() {
   hud.update(0, elapsed);
+}
+
+// --- Garage (v2): G opens the panel; the world freezes while it is open
+// (but the HUD keeps updating). Esc closes the garage before pausing.
+const garageUI = createGarageUI({
+  getStarterCar: () => vehicles.starterCar,
+  onBuy: () => audio.click(),
+});
+let garageOpen = false;
+function openGarage() {
+  garageOpen = true;
+  garageUI.open();
+}
+function closeGarage() {
+  garageOpen = false;
+  garageUI.close();
 }
 
 // --- Menus: start screen / pause / game over (wired minimally for part A). ---
@@ -119,11 +147,13 @@ function beginPlay() {
 
 document.getElementById('btn-start')?.addEventListener('click', () => {
   saveManager.newGame();
+  applyPaintTo(vehicles.starterCar);
   beginPlay();
   audio.click();
 });
 document.getElementById('btn-continue')?.addEventListener('click', () => {
   const ok = saveManager.continueGame();
+  if (ok) applyPaintTo(vehicles.starterCar);
   beginPlay();
   audio.click();
   if (!ok) missions.startMission('m1');
@@ -140,6 +170,7 @@ for (const id of ['btn-restart', 'btn-again']) {
 
 function togglePause() {
   if (!state.started || state.gameOver) return;
+  if (garageOpen) { closeGarage(); return; }
   state.paused = !state.paused;
   show(pauseScreen, state.paused);
   audio.click();
@@ -157,6 +188,7 @@ const clock = new THREE.Clock();
 let elapsed = 0;
 let saveTimer = 0;
 let lastShotCrimeAt = -10;
+let lastNearMissAt = -10; // v2: near-miss REP cooldown (seconds)
 let gameOverShown = false;
 
 // --- Shot mode (part C): ?shot=start|drive|chase|mission places the game
@@ -198,9 +230,20 @@ function animate() {
     state.playSeconds += delta;
     updateCity(city, delta, elapsed);
     effects.update(delta);
-    if (state.started && !state.gameOver) {
+    // Garage toggle (G) — v2: handled outside the garageOpen gate so G
+    // closes the panel too. Opening freezes the world (see the gate below).
+    if (state.started && !state.gameOver && input.wasPressed('garage')) {
+      if (garageOpen) closeGarage(); else openGarage();
+      audio.click();
+    }
+    if (state.started && !state.gameOver && !garageOpen) {
       // Shot mode: drive / chase auto-accelerate so the shot reads at speed.
       if (shotSetup && shotSetup.autoDrive) input.held.up = true;
+      // Radio (C) — v2: cycle the synth stations while playing.
+      if (input.wasPressed('radio')) {
+        const name = audio.cycleRadio();
+        hud.toast(name ? `RADIO · ${name}` : 'RADIO OFF');
+      }
       // Enter / exit car.
       if (input.wasPressed('enter')) {
         if (player.onFoot) {
@@ -258,6 +301,19 @@ function animate() {
       }
       player.update(delta, input, camYaw, city.colliders);
       vehicles.update(delta, input, player);
+      // v2: near-miss driving — pass a traffic car close at speed for +REP.
+      if (player.vehicle && player.vehicle.speedMph > 25 && elapsed - lastNearMissAt > 5) {
+        for (const v of vehicles.vehicles) {
+          if (!v.traffic) continue;
+          const d = Math.hypot(v.position.x - player.vehicle.position.x, v.position.z - player.vehicle.position.z);
+          if (d < 4.5) {
+            lastNearMissAt = elapsed;
+            addRep(NEAR_MISS_REP);
+            hud.toast(`+${NEAR_MISS_REP} REP — Near miss!`);
+            break;
+          }
+        }
+      }
       // Handbrake at speed leaves skid marks behind the player's car.
       if (player.vehicle && input.held.handbrake && Math.abs(player.vehicle.speed) > 6) {
         const car = player.vehicle;
@@ -278,6 +334,7 @@ function animate() {
     } else if (state.gameOver && !gameOverShown) {
       gameOverShown = true;
       audio.engineOff();
+      audio.stopRadio();
       audio.siren(false);
       audio.heli(false);
       if (player.wasted) missions.failMission('wasted');
@@ -307,6 +364,7 @@ window.__game = {
   input,
   audio,
   hud,
+  garage: garageUI,
   effects,
   saveManager,
   shotSetup,

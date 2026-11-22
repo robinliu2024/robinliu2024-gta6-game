@@ -22,6 +22,9 @@ export function createInitialState() {
     carsStolen: 0,
     distanceDriven: 0,
     playSeconds: 0,
+    // Garage upgrades (garage.js): levels 0..3 per track + paint id.
+    // Persisted in the save; runtime-only refs below are never saved.
+    garage: { speed: 0, accel: 0, armor: 0, paint: 'teal' },
     // Weapon system (combat.js): current weapon + mag/reserve ammo per tier.
     // Runtime-only, not saved — a fresh run starts with a full loadout.
     weapons: {
@@ -78,7 +81,9 @@ export function setWanted(level) {
 }
 
 export function damagePlayer(amount) {
-  state.health = Math.max(0, state.health - amount);
+  // Armor plating (garage.js) absorbs 10% of damage per level, up to 30%.
+  const armor = (state.garage && state.garage.armor) || 0;
+  state.health = Math.max(0, state.health - amount * (1 - 0.10 * armor));
   if (state.health === 0) state.gameOver = true;
   return state.health;
 }
@@ -136,6 +141,7 @@ export function saveShape() {
     completedMissions: [...state.completedMissions],
     kills: state.kills,
     carsStolen: state.carsStolen,
+    garage: { ...(state.garage || { speed: 0, accel: 0, armor: 0, paint: 'teal' }) },
     distanceDriven: Math.round(state.distanceDriven),
     playSeconds: Math.round(state.playSeconds),
     savedAt: Date.now(),
@@ -177,6 +183,11 @@ export function applySave(data) {
   state.carsStolen = data.carsStolen ?? 0;
   state.distanceDriven = data.distanceDriven ?? 0;
   state.playSeconds = data.playSeconds ?? 0;
+  // Older saves have no garage block; merge over defaults.
+  state.garage = {
+    speed: 0, accel: 0, armor: 0, paint: 'teal',
+    ...(data.garage || {}),
+  };
   return true;
 }
 

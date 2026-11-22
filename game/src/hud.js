@@ -5,6 +5,7 @@
 
 import { CITY, MAX_WANTED } from './config.js';
 import { state, currentMission, currentObjective } from './state.js';
+import { repTier } from './garage.js';
 import { roadLines, districtAt } from './city.js';
 
 const WORLD = CITY.halfSize; // world x/z run -320..320
@@ -183,13 +184,42 @@ export function createHud(deps = {}) {
     ctx.restore();
   }
 
+  // Toast line (v2): brief feedback under the objective bar — REP gains,
+  // radio station changes, garage messages. One toast at a time.
+  let toastEl = el('hud-toast');
+  if (!toastEl && refs.hud) {
+    toastEl = document.createElement('div');
+    toastEl.id = 'hud-toast';
+    toastEl.style.cssText = [
+      'position:absolute', 'left:50%', 'top:118px', 'transform:translateX(-50%)',
+      'background:rgba(0,0,0,0.65)', 'color:#ffd23f', 'font-size:15px', 'font-weight:700',
+      'padding:6px 14px', 'border-radius:6px', 'text-shadow:0 1px 4px rgba(0,0,0,0.9)',
+      'display:none', 'white-space:nowrap', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(toastEl);
+  }
+  let toastTimer = null;
+  function toast(text, ms = 2600) {
+    if (!toastEl) return;
+    toastEl.textContent = text;
+    toastEl.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
+  }
+
+  // Controls hint: add the v2 keys (garage G, radio C).
+  const controlsEl = el('hud-controls');
+  if (controlsEl && !controlsEl.textContent.includes('G garage')) {
+    controlsEl.textContent += ' · G garage · C radio';
+  }
+
   let lastObjective = '';
   function update(dt, elapsed) {
     void dt;
     void elapsed;
     if (refs.money) refs.money.textContent = money(state.money);
     if (refs.debt) refs.debt.textContent = `Debt ${money(state.debt)}`;
-    if (refs.rep) refs.rep.textContent = `REP ${state.rep}`;
+    if (refs.rep) refs.rep.textContent = `REP ${state.rep} · ${repTier(state.rep).name}`;
     if (refs.stars) {
       const w = Math.max(0, Math.min(MAX_WANTED, state.wanted));
       refs.stars.textContent = '★'.repeat(w) + '☆'.repeat(MAX_WANTED - w);
@@ -263,7 +293,7 @@ export function createHud(deps = {}) {
     drawMinimap();
   }
 
-  return { update, drawMinimap, refs };
+  return { update, drawMinimap, refs, toast };
 }
 
 export default createHud;

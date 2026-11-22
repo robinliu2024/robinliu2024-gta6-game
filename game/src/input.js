@@ -14,6 +14,8 @@ const KEY_ALIASES = {
   KeyP: 'pause', Escape: 'pause',
   Digit1: 'weapon1', Digit2: 'weapon2', Digit3: 'weapon3',
   KeyR: 'reload',
+  KeyG: 'garage', // v2: open the Solmar Garage panel
+  KeyC: 'radio',  // v2: cycle the radio stations
 };
 
 class Input {

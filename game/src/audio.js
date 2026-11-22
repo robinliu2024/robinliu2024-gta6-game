@@ -19,6 +19,11 @@ class AudioEngine {
     this.rotorLfo = null;
     this.rotorLfoGain = null;
     this.ready = false;
+    // Radio (v2): -1 = off, 0..2 = station index.
+    this.radioStation = -1;
+    this._radioTimer = null;
+    this._radioStep = 0;
+    this._radioNextTime = 0;
   }
 
   // Call from the first user gesture (start button). Safe to call repeatedly.
@@ -237,7 +242,100 @@ class AudioEngine {
       }
     } catch { /* audio unavailable */ }
   }
+  // --- Radio (v2): 3 synthesized stations, 16-step loops, no audio files.
+  // cycleRadio() steps OFF -> 1 -> 2 -> 3 -> OFF. Station state is kept
+  // even before the context exists; the scheduler only runs when ready.
+  // midiToFreq converts the pattern notes (MIDI numbers, 0 = rest).
+  _radioNoteFreq(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  _toneAt(freq, time, dur, type = 'sine', vol = 0.2) {
+    if (!this.ready || !this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, time);
+      gain.gain.setValueAtTime(vol, time);
+      gain.gain.exponentialRampToValueAtTime(0.001, time + dur);
+      osc.connect(gain);
+      gain.connect(this.master);
+      osc.start(time);
+      osc.stop(time + dur + 0.02);
+    } catch { /* audio unavailable */ }
+  }
+
+  _startRadio() {
+    if (!this.ready || !this.ctx || this.radioStation < 0) return;
+    this._stopRadioTimer();
+    const station = RADIO_STATIONS[this.radioStation];
+    const stepDur = 60 / station.bpm / 4; // 16th notes
+    this._radioStep = 0;
+    this._radioNextTime = this.ctx.currentTime + 0.05;
+    this._radioTimer = setInterval(() => {
+      if (!this.ctx || this.radioStation < 0) return;
+      const st = RADIO_STATIONS[this.radioStation];
+      const sd = 60 / st.bpm / 4;
+      while (this._radioNextTime < this.ctx.currentTime + 0.15) {
+        const step = this._radioStep % 16;
+        const t = this._radioNextTime;
+        const bass = st.bass[step];
+        if (bass) this._toneAt(this._radioNoteFreq(bass), t, sd * 1.8, st.bassWave, 0.16);
+        const lead = st.lead[step];
+        if (lead) this._toneAt(this._radioNoteFreq(lead), t, sd * 0.9, st.leadWave, 0.09);
+        this._radioStep += 1;
+        this._radioNextTime += sd;
+      }
+    }, 40);
+  }
+
+  _stopRadioTimer() {
+    if (this._radioTimer) {
+      clearInterval(this._radioTimer);
+      this._radioTimer = null;
+    }
+  }
+
+  // Cycle OFF -> station 1 -> 2 -> 3 -> OFF. Returns the station name or null.
+  cycleRadio() {
+    this.radioStation = this.radioStation >= RADIO_STATIONS.length - 1 ? -1 : this.radioStation + 1;
+    if (this.radioStation < 0) {
+      this._stopRadioTimer();
+      return null;
+    }
+    this._startRadio();
+    return RADIO_STATIONS[this.radioStation].name;
+  }
+
+  radioName() {
+    return this.radioStation >= 0 ? RADIO_STATIONS[this.radioStation].name : null;
+  }
+
+  stopRadio() {
+    this.radioStation = -1;
+    this._stopRadioTimer();
+  }
 }
+
+// Radio station patterns: 16 steps of MIDI notes (0 = rest).
+const RADIO_STATIONS = [
+  {
+    name: 'SOLMAR FM', bpm: 100, bassWave: 'sawtooth', leadWave: 'square',
+    bass: [45, 0, 0, 45, 0, 0, 48, 0, 45, 0, 0, 45, 0, 43, 0, 0],
+    lead: [69, 0, 72, 0, 76, 0, 72, 0, 69, 0, 67, 0, 64, 0, 67, 0],
+  },
+  {
+    name: 'BAY 98.5', bpm: 72, bassWave: 'triangle', leadWave: 'sine',
+    bass: [41, 0, 0, 0, 46, 0, 0, 0, 43, 0, 0, 0, 48, 0, 0, 0],
+    lead: [65, 0, 0, 69, 0, 0, 72, 0, 71, 0, 0, 69, 0, 67, 0, 0],
+  },
+  {
+    name: 'HEAT 107', bpm: 128, bassWave: 'square', leadWave: 'sawtooth',
+    bass: [40, 40, 0, 40, 0, 40, 0, 0, 43, 43, 0, 43, 0, 45, 0, 0],
+    lead: [76, 0, 76, 79, 0, 76, 0, 74, 76, 0, 79, 0, 81, 0, 79, 76],
+  },
+];
 
 export const audio = new AudioEngine();
 export default audio;
