@@ -4,13 +4,23 @@
 
 import * as THREE from 'three';
 import { CITY, TUNING, makeRng } from './config.js';
-import { state, setWanted } from './state.js';
+import { state, setWanted, damagePlayer } from './state.js';
+import { damageTarget } from './combat.js';
 import { speedMultiplier, accelMultiplier, applyPaintTo } from './garage.js';
 import { roadLines, nearestRoadPoint } from './city.js';
 import { collideCircle } from './player.js';
 
 const MS_TO_MPH = 2.23694;
 const CAR_COLORS = [0xc23b2e, 0x2e6fc2, 0xe8b93c, 0x3aa655, 0x8a5fc2, 0xd8d8d8, 0x222831, 0xe07a3a];
+
+// Vehicle explosion (v3): blast radius in metres, damage at the centre and
+// at the edge (linear falloff), the flat hit a driver takes from their own
+// car blowing up, and how long a burning wreck stays on the street.
+export const EXPLOSION_RADIUS = 10;
+export const EXPLOSION_DAMAGE_CENTER = 70;
+export const EXPLOSION_DAMAGE_EDGE = 15;
+export const PLAYER_EXPLOSION_DAMAGE = 35;
+export const WRECK_DURATION = 25;
 
 // Drivable / stealable vehicle types. maxSpeed/accel are m/s; turn is the
 // steering rate; radius is the collision circle; tough is how much speed a
@@ -163,9 +173,47 @@ export class Vehicle {
     this.traffic = !!opts.traffic;
     this.trafficTarget = null;
     this.trafficSpeed = this.stats.maxSpeed * (0.20 + Math.random() * 0.08);
+    // Combat + damage (v3): cars can be shot and blown up. Van 140 HP,
+    // bike 70 HP, everything else 100 HP. A wrecked car is a burning
+    // wreck, not a drivable car (see VehicleManager.explodeVehicle).
+    this.health = this.kind === 'van' ? 140 : this.kind === 'motorcycle' ? 70 : 100;
+    this.maxHealth = this.health;
+    this.wrecked = false;
+    this.tireDamage = 0; // 0..1 from spike strips: shredded tires slow the car
+    this.onDestroyed = null; // fn(vehicle) — set by VehicleManager
+    this.aimHeight = 1.0;    // combat ray-test centre height
+    this.radius = this.stats.radius; // combat ray-test sphere radius
   }
 
   get speedMph() { return Math.abs(this.speed) * MS_TO_MPH; }
+
+  // Combat: take a hit. Returns 'hit', 'destroyed', or null when already
+  // wrecked. The mission car takes half damage and cannot be destroyed —
+  // blowing up the m2 coupe would soft-lock the mission, so it bottoms
+  // out at 1 HP instead.
+  takeDamage(amount) {
+    if (this.wrecked) return null;
+    if (this.isMissionCar) amount *= 0.5;
+    this.health -= amount;
+    if (this.health <= 0) {
+      if (this.isMissionCar) {
+        this.health = 1;
+        return 'hit';
+      }
+      this.health = 0;
+      if (typeof this.onDestroyed === 'function') this.onDestroyed(this);
+      return 'destroyed';
+    }
+    return 'hit';
+  }
+
+  // Spike strips (police.js): shredded tires — top speed and acceleration
+  // drop, and the car bleeds speed. +0.5 per strip hit, capped at 1.0.
+  // Returns the new tire-damage level (0..1).
+  applySpikeDamage() {
+    this.tireDamage = Math.min(1, (this.tireDamage || 0) + 0.5);
+    return this.tireDamage;
+  }
 
   // Headlights: lamp glow + beam cone scale with the night factor (0 = day).
   setNight(f) {
@@ -225,7 +273,11 @@ export class Vehicle {
     const tuned = this.driver === 'player';
     const accelMul = tuned ? accelMultiplier() : 1;
     const topMul = tuned ? speedMultiplier() : 1;
-    const accel = axes.y > 0 ? st.accel * accelMul : 0;
+    // Shredded tires (spike strips): less grip, less top speed, and the
+    // car bleeds speed even at full throttle.
+    const tire = this.tireDamage || 0;
+    const tireTopMul = 1 - 0.5 * tire;
+    const accel = axes.y > 0 ? st.accel * accelMul * (1 - 0.3 * tire) : 0;
     const braking = axes.y < 0;
     if (accel) this.speed += accel * dt;
     if (braking) {
@@ -234,7 +286,8 @@ export class Vehicle {
     }
     if (!accel && !braking) this.speed *= Math.max(0, 1 - 0.9 * dt); // coast drag
     if (handbrake) this.speed *= Math.max(0, 1 - 2.2 * dt);
-    this.speed = Math.max(-12, Math.min(st.maxSpeed * topMul, this.speed));
+    if (tire > 0) this.speed *= Math.max(0, 1 - 0.25 * tire * dt);
+    this.speed = Math.max(-12, Math.min(st.maxSpeed * topMul * tireTopMul, this.speed));
     const steerInput = axes.x;
     const steerTarget = steerInput * st.turn * (handbrake ? 1.5 : 1);
     this.steer += (steerTarget - this.steer) * Math.min(1, dt * 8);
@@ -297,6 +350,15 @@ export class VehicleManager {
     this.lowQuality = !!opts.lowQuality;
     this.colliders = opts.colliders || [];
     this.nightFactor = 0;
+    // Explosion wiring (v3): effects for fire/smoke/shockwave, and lazy
+    // getters for the blast victims (police, pedestrians, player). main.js
+    // supplies them; the Node harness can pass fakes or leave them null.
+    this.effects = opts.effects || null;
+    this.getPolice = opts.getPolice || null;
+    this.getPedestrians = opts.getPedestrians || null;
+    this.getPlayer = opts.getPlayer || null;
+    this._lastPlayer = null;
+    this.wrecks = []; // { vehicle, timer, fireTimer, smokeTimer }
     // One real spotlight for the player's headlights at night (three r160
     // physical lights: intensity is in candela). It follows the driven car.
     this.headlight = new THREE.SpotLight(0xffe9a0, 0, 45, 0.55, 0.6, 1.2);
@@ -307,8 +369,90 @@ export class VehicleManager {
     this._spawnTraffic();
   }
 
-  // Night factor from the day/night cycle (0 = day, 1 = night): lamp glow +
-  // beam cones on every vehicle. Skips the loop when nothing changed.
+  // Register a vehicle with the manager: hook its destruction so a car
+  // whose health hits zero explodes through explodeVehicle below.
+  _addVehicle(v) {
+    v.onDestroyed = (veh) => this.explodeVehicle(veh);
+    this.vehicles.push(v);
+    return v;
+  }
+
+  // Blow a car up: fireball + smoke + shockwave, charred wreck left
+  // burning in place, blast damage to nearby cops, pedestrians, other cars
+  // (chain explosions) and the player. The driver is ejected and hurt but
+  // not insta-killed (35 damage from full health leaves room to run); a
+  // player on foot nearby takes the same capped blast damage. The mission
+  // car can never reach this (see Vehicle.takeDamage). Returns false when
+  // the vehicle was already a wreck.
+  explodeVehicle(v) {
+    if (!v || v.wrecked) return false;
+    v.wrecked = true;
+    v.health = 0;
+    v.speed = 0;
+    // Char the wreck: darken every material so it reads as burnt out.
+    v.mesh.traverse((child) => {
+      if (child.isMesh && child.material && child.material.color) {
+        child.material = child.material.clone();
+        child.material.color.setHex(0x1a1a1a);
+        if ('roughness' in child.material) child.material.roughness = 1;
+        if ('emissiveIntensity' in child.material) child.material.emissiveIntensity = 0;
+      }
+    });
+    v.mesh.rotation.z = 0.06;
+    if (this.effects) {
+      this.effects.spawnExplosion(v.position);
+      this.effects.spawnShockwave(v.position);
+      this.effects.spawnSmoke(v.position);
+    }
+    this.wrecks.push({ vehicle: v, timer: WRECK_DURATION, fireTimer: 0, smokeTimer: 0 });
+    const player = (this.getPlayer && this.getPlayer()) || this._lastPlayer;
+    const wasDriver = !!(player && player.vehicle === v);
+    if (wasDriver) {
+      // Eject the driver first, then the survivable hit.
+      v.exit(player);
+      damagePlayer(PLAYER_EXPLOSION_DAMAGE);
+    } else if (player && player.onFoot && player.position) {
+      const d = player.position.distanceTo(v.position);
+      if (d < EXPLOSION_RADIUS) {
+        damagePlayer(Math.min(PLAYER_EXPLOSION_DAMAGE, this._blastDamage(d)));
+      }
+    }
+    // Blast damage to cops (interceptors, SWAT van, PIT unit), pedestrians
+    // and other cars. Cars chain: their takeDamage fires explodeVehicle.
+    const police = this.getPolice ? this.getPolice() : null;
+    if (police) {
+      const units = [...(police.cops || [])];
+      if (police.swat) units.push(police.swat);
+      if (police.pit) units.push(police.pit);
+      for (const u of units) {
+        if (!u || u.down) continue;
+        const d = u.position.distanceTo(v.position);
+        if (d < EXPLOSION_RADIUS) damageTarget(u, this._blastDamage(d));
+      }
+    }
+    const peds = this.getPedestrians ? this.getPedestrians() : null;
+    if (peds && peds.peds) {
+      for (const p of peds.peds) {
+        if (!p.alive) continue;
+        const d = p.position.distanceTo(v.position);
+        if (d < EXPLOSION_RADIUS) damageTarget(p, this._blastDamage(d));
+      }
+      if (typeof peds.scareAll === 'function') peds.scareAll(v.position, 45);
+    }
+    for (const other of [...this.vehicles]) {
+      if (other === v || other.wrecked) continue;
+      const d = other.position.distanceTo(v.position);
+      if (d < EXPLOSION_RADIUS) other.takeDamage(Math.round(this._blastDamage(d) * 0.8));
+    }
+    return true;
+  }
+
+  // Blast damage at distance d from the explosion centre: 70 at the
+  // middle, 15 at the edge, linear falloff.
+  _blastDamage(d) {
+    const f = Math.max(0, 1 - d / EXPLOSION_RADIUS);
+    return Math.round(EXPLOSION_DAMAGE_EDGE + (EXPLOSION_DAMAGE_CENTER - EXPLOSION_DAMAGE_EDGE) * f);
+  }
   setNight(f) {
     if (Math.abs(f - this.nightFactor) < 0.005) return;
     this.nightFactor = f;
@@ -333,14 +477,14 @@ export class VehicleManager {
         color: CAR_COLORS[Math.floor(this.rng() * CAR_COLORS.length)],
         parked: true, id: `parked-${i}`,
       });
-      this.vehicles.push(v);
+      this._addVehicle(v);
     }
     // Player's starter car near the Harbor spawn.
     const starter = new Vehicle(this.scene, {
       x: -218, z: 186, heading: Math.PI / 2, color: 0x1e6f5c,
       parked: true, isPlayerCar: true, id: 'starter',
     });
-    this.vehicles.push(starter);
+    this._addVehicle(starter);
     this.starterCar = starter;
     applyPaintTo(starter); // re-apply the saved paint (default teal on a new game)
   }
@@ -361,7 +505,7 @@ export class VehicleManager {
         color: CAR_COLORS[Math.floor(this.rng() * CAR_COLORS.length)],
         parked: false, traffic: true, id: `traffic-${i}`,
       });
-      this.vehicles.push(v);
+      this._addVehicle(v);
     }
   }
 
@@ -372,7 +516,7 @@ export class VehicleManager {
       parked: true, isMissionCar: true, id: `mission-${kind}`,
     });
     v.setNight(this.nightFactor);
-    this.vehicles.push(v);
+    this._addVehicle(v);
     return v;
   }
 
@@ -380,6 +524,7 @@ export class VehicleManager {
     let best = null;
     let bestD = maxDist;
     for (const v of this.vehicles) {
+      if (v.wrecked) continue; // a burning wreck is not a car to steal
       const d = Math.hypot(v.position.x - pos.x, v.position.z - pos.z);
       if (d < bestD) { bestD = d; best = v; }
     }
@@ -387,9 +532,29 @@ export class VehicleManager {
   }
 
   update(dt, inp, player) {
+    if (player) this._lastPlayer = player;
     for (const v of this.vehicles) {
+      if (v.wrecked) continue; // wrecks do not drive
       if (v.driver === 'player') v.drive(dt, inp, this.colliders);
       else if (v.traffic) v.updateTraffic(dt, this.colliders);
+    }
+    // Burning wrecks: keep puffing fire + smoke, then clear the wreck
+    // off the street after WRECK_DURATION seconds.
+    for (let i = this.wrecks.length - 1; i >= 0; i--) {
+      const w = this.wrecks[i];
+      w.timer -= dt;
+      w.fireTimer -= dt;
+      w.smokeTimer -= dt;
+      if (this.effects) {
+        if (w.fireTimer <= 0) { this.effects.spawnFire(w.vehicle.position); w.fireTimer = 0.18; }
+        if (w.smokeTimer <= 0) { this.effects.spawnSmoke(w.vehicle.position); w.smokeTimer = 0.35; }
+      }
+      if (w.timer <= 0) {
+        this.scene.remove(w.vehicle.mesh);
+        const vi = this.vehicles.indexOf(w.vehicle);
+        if (vi !== -1) this.vehicles.splice(vi, 1);
+        this.wrecks.splice(i, 1);
+      }
     }
     // Keep the shared speed readout honest when on foot.
     if (player && player.onFoot) state.speedMph = 0;

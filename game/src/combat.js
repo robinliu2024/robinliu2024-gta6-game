@@ -1,10 +1,14 @@
-// Solmar Heat — combat: weapon system (pistol / shotgun / rifle).
-// Three tiers with distinct feel (damage, fire rate, spread, range), mag +
-// reserve ammo, reloads, weapon switching (1/2/3 + mouse wheel), and a
+// Solmar Heat — combat: weapon system (pistol / shotgun / rifle / SMG).
+// Four tiers with distinct feel (damage, fire rate, spread, range), mag +
+// reserve ammo, reloads, weapon switching (1/2/3/4 + mouse wheel), and a
 // generic ray-vs-target hit test so any shootable thing (police cars,
-// pedestrians, future gang members in missions) can take damage through the
-// same interface: a target needs `position`, `aimHeight`, `radius`, and a
-// `takeDamage(amount)` returning 'down' | 'hit' | null.
+// pedestrians, vehicles, future gang members in missions) can take damage
+// through the same interface: a target needs `position`, `aimHeight`,
+// `radius`, and a `takeDamage(amount)` returning 'down' | 'hit' | null
+// (vehicles return 'destroyed' instead of 'down' — see vehicles.js).
+// Attachments (v3, shop-bought, per weapon): extended magazine (+50% mag)
+// and tactical scope (tighter spread). They persist on state.weapons
+// (see ensureWeaponState / saveShape / applySave in state.js).
 
 import * as THREE from 'three';
 import { state } from './state.js';
@@ -28,14 +32,66 @@ export const WEAPONS = {
     pellets: 1, magSize: 30, reserveAmmo: 90, reloadTime: 1.9,
     auto: true, shake: 0.18,
   },
+  // v3 tier 4 (Builder 3): fast full-auto SMG — medium damage, high fire
+  // rate, best at near-to-mid range. Bought at Solmar Arms for $3200.
+  smg: {
+    id: 'smg', name: 'SMG', slot: 4,
+    damage: 16, fireInterval: 0.07, spread: 0.03, range: 55,
+    pellets: 1, magSize: 32, reserveAmmo: 96, reloadTime: 1.4,
+    auto: true, shake: 0.14,
+  },
 };
 
-export const WEAPON_ORDER = ['pistol', 'shotgun', 'rifle'];
+export const WEAPON_ORDER = ['pistol', 'shotgun', 'rifle', 'smg'];
+
+// Attachments: bought in the shop for the currently selected weapon.
+// mag: +50% magazine capacity. scope: spread x0.6 (tighter, more accurate).
+export const ATTACHMENT_DEFS = {
+  mag: { id: 'mag', name: 'Extended Magazine', price: 900, desc: '+50% magazine capacity' },
+  scope: { id: 'scope', name: 'Tactical Scope', price: 1200, desc: 'Tighter spread, better accuracy' },
+};
+export const MAG_CAPACITY_MULT = 1.5;
+export const SCOPE_SPREAD_MULT = 0.6;
+
+export function ensureAttachments() {
+  const w = ensureWeaponState();
+  if (!w.attachments || typeof w.attachments !== 'object') {
+    w.attachments = { mag: {}, scope: {} };
+  }
+  if (!w.attachments.mag || typeof w.attachments.mag !== 'object') w.attachments.mag = {};
+  if (!w.attachments.scope || typeof w.attachments.scope !== 'object') w.attachments.scope = {};
+  return w.attachments;
+}
+
+export function hasAttachment(kind, id) {
+  if (!ATTACHMENT_DEFS[kind]) return false;
+  return !!ensureAttachments()[kind][id];
+}
+
+export function ownAttachment(kind, id) {
+  if (!ATTACHMENT_DEFS[kind] || !WEAPONS[id]) return false;
+  ensureAttachments()[kind][id] = true;
+  return true;
+}
+
+// Effective stats with attachments applied (mag size / spread).
+export function effectiveMagSize(id) {
+  const w = WEAPONS[id];
+  if (!w) return 0;
+  return hasAttachment('mag', id) ? Math.round(w.magSize * MAG_CAPACITY_MULT) : w.magSize;
+}
+
+export function effectiveSpread(id) {
+  const w = WEAPONS[id];
+  if (!w) return 0;
+  return hasAttachment('scope', id) ? w.spread * SCOPE_SPREAD_MULT : w.spread;
+}
 
 // Ammo lives on the shared state object so HUD / saves can read it; the
 // Combat instance is the only writer. Ownership (shop.js, v3): the pistol
-// is Rico's from the start; shotgun / rifle are bought at Solmar Arms.
-// A state without an `owned` block (pre-v3 save) keeps all three weapons.
+// is Rico's from the start; shotgun / rifle / SMG are bought at Solmar Arms.
+// A state without an `owned` block (pre-v3 save) keeps the first three
+// weapons; the SMG is new in v3, so it stays locked even on old saves.
 export function ensureWeaponState() {
   if (!state.weapons) {
     state.weapons = { current: 'pistol', owned: {}, ammo: {} };
@@ -49,12 +105,23 @@ export function ensureWeaponState() {
     }
   }
   if (!state.weapons.owned || typeof state.weapons.owned !== 'object') {
-    // No ownership record: a pre-v3 save — grandfather all three.
-    state.weapons.owned = { pistol: true, shotgun: true, rifle: true };
+    // No ownership record: a pre-v3 save — grandfather the first three.
+    state.weapons.owned = { pistol: true, shotgun: true, rifle: true, smg: false };
   } else {
     for (const id of WEAPON_ORDER) {
       if (typeof state.weapons.owned[id] !== 'boolean') state.weapons.owned[id] = id === 'pistol';
     }
+  }
+  // Attachments block, inlined here (ensureAttachments() calls this fn,
+  // so calling it back would recurse).
+  if (!state.weapons.attachments || typeof state.weapons.attachments !== 'object') {
+    state.weapons.attachments = { mag: {}, scope: {} };
+  }
+  if (!state.weapons.attachments.mag || typeof state.weapons.attachments.mag !== 'object') {
+    state.weapons.attachments.mag = {};
+  }
+  if (!state.weapons.attachments.scope || typeof state.weapons.attachments.scope !== 'object') {
+    state.weapons.attachments.scope = {};
   }
   if (!WEAPONS[state.weapons.current]) state.weapons.current = 'pistol';
   return state.weapons;
@@ -118,6 +185,11 @@ export class Combat {
   get currentId() { return ensureWeaponState().current; }
   get current() { return WEAPONS[this.currentId]; }
 
+  // Effective stats with attachments applied (see combat.js top).
+  magSizeFor(id) { return effectiveMagSize(id || this.currentId); }
+  spreadFor(id) { return effectiveSpread(id || this.currentId); }
+  hasAttachment(kind, id) { return hasAttachment(kind, id || this.currentId); }
+
   ammo(id) {
     const a = ensureWeaponState().ammo[id || this.currentId];
     return { mag: a.mag, reserve: a.reserve };
@@ -158,7 +230,7 @@ export class Combat {
   startReload() {
     const w = this.current;
     const a = ensureWeaponState().ammo[w.id];
-    if (this.reloading || a.mag >= w.magSize || a.reserve <= 0) return false;
+    if (this.reloading || a.mag >= effectiveMagSize(w.id) || a.reserve <= 0) return false;
     this.reloading = true;
     this.reloadTimer = w.reloadTime;
     return true;
@@ -177,7 +249,7 @@ export class Combat {
         this.reloading = false;
         const w = this.current;
         const a = ensureWeaponState().ammo[w.id];
-        const need = w.magSize - a.mag;
+        const need = effectiveMagSize(w.id) - a.mag;
         const moved = Math.min(need, a.reserve);
         a.mag += moved;
         a.reserve -= moved;
@@ -207,8 +279,9 @@ export class Combat {
       const up = Math.abs(d.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
       const right = new THREE.Vector3().crossVectors(d, up).normalize();
       const up2 = new THREE.Vector3().crossVectors(right, d).normalize();
-      const sx = (rng() * 2 - 1) * w.spread;
-      const sy = (rng() * 2 - 1) * w.spread;
+      const spread = effectiveSpread(w.id);
+      const sx = (rng() * 2 - 1) * spread;
+      const sy = (rng() * 2 - 1) * spread;
       const ray = d.clone()
         .addScaledVector(right, sx)
         .addScaledVector(up2, sy)

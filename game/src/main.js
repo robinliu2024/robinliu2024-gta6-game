@@ -61,7 +61,10 @@ const city = buildCity(scene, { seed: state.seed, lowQuality: state.lowQuality }
 // --- Gameplay systems (part B). ---
 const start = spawnPoint('player');
 const player = new Player(scene, start);
-const vehicles = new VehicleManager(scene, { seed: state.seed, lowQuality: state.lowQuality, colliders: city.colliders });
+const vehicles = new VehicleManager(scene, {
+  seed: state.seed, lowQuality: state.lowQuality, colliders: city.colliders,
+  getPolice: () => police, getPedestrians: () => pedestrians, getPlayer: () => player,
+});
 const pedestrians = new PedestrianManager(scene, { seed: state.seed, lowQuality: state.lowQuality, colliders: city.colliders });
 const police = new PoliceManager(scene, { seed: state.seed, colliders: city.colliders });
 const world = { player, vehicles, police, audio };
@@ -106,11 +109,15 @@ safehouses.onTravel = (spot) => {
 const effects = new Effects(scene, { lowQuality: state.lowQuality });
 effects.subscribeToPlayer(player);
 world.effects = effects; // v3: crew gunner tracers go through effects
-// Combat targets: live cops (downed ones stop being targets) + living peds.
+// v3: explosions need the effects module for fire / smoke / shockwave.
+vehicles.effects = effects;
+// Combat targets: live cops (downed ones stop being targets) + living peds
+// + drivable vehicles (shooting a car can blow it up — see vehicles.js).
 // Mission gang members, when they exist, join this list the same way.
 player.setTargetProvider(() => [
-  ...police.cops.filter((c) => !c.down),
+  ...police.shootables(),
   ...pedestrians.peds.filter((p) => p.alive),
+  ...vehicles.vehicles.filter((v) => !v.wrecked),
 ]);
 const saveManager = createSaveManager({ getMissions: () => missions });
 
@@ -346,10 +353,11 @@ function animate() {
           }
         }
       }
-      // Weapon keys: 1/2/3 switch, mouse wheel cycles, R reloads.
+      // Weapon keys: 1/2/3/4 switch, mouse wheel cycles, R reloads.
       if (input.wasPressed('weapon1') && player.selectWeapon('pistol')) audio.click();
       if (input.wasPressed('weapon2') && player.selectWeapon('shotgun')) audio.click();
       if (input.wasPressed('weapon3') && player.selectWeapon('rifle')) audio.click();
+      if (input.wasPressed('weapon4') && player.selectWeapon('smg')) audio.click();
       const wheel = input.consumeWheel();
       if (wheel !== 0 && player.onFoot && player.cycleWeapon(wheel > 0 ? 1 : -1)) audio.click();
       if (input.wasPressed('reload') && player.onFoot && player.reloadWeapon()) audio.reload();

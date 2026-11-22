@@ -90,7 +90,7 @@ export class Player {
     this.punchTimer = 0;
     this.walkPhase = 0;
     this.health = state.health;
-    this.combat = new Combat();   // weapon system: pistol / shotgun / rifle
+    this.combat = new Combat();   // weapon system: pistol / shotgun / rifle / SMG
     this._targetProvider = null;  // fn() -> shootable targets, set by main.js
     this._shootListeners = [];
     this._punchListeners = [];

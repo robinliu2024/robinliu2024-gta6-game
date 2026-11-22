@@ -1,7 +1,8 @@
 // Solmar Heat — shops + safehouses (v3, Builder 2).
-// Two Solmar Arms shops (Downtown + Harbor): ammo for all three weapons,
-// the weapons themselves (pistol comes with Rico; shotgun / rifle are
-// bought here — the 4th weapon tier is Builder 3's), and a bulletproof vest
+// Two Solmar Arms shops (Downtown + Harbor): ammo for all four weapons,
+// the weapons themselves (pistol comes with Rico; shotgun / rifle / SMG are
+// bought here), weapon attachments (extended mag + scope, for the weapon
+// Rico currently has equipped), and a bulletproof vest
 // (-25% damage taken, persisted on state.vest). Prices use the garage's
 // REP-tier discount so the economy stays consistent. Two safehouses
 // (Harbor + Downtown): E saves the game, T fast-travels between them, and
@@ -11,7 +12,7 @@
 
 import * as THREE from 'three';
 import { state, addMoney, saveGame } from './state.js';
-import { WEAPONS, ensureWeaponState, ownWeapon } from './combat.js';
+import { WEAPONS, ATTACHMENT_DEFS, ensureWeaponState, ownWeapon, ownAttachment, hasAttachment } from './combat.js';
 import { discountedPrice } from './garage.js';
 
 export const SHOP_RADIUS = 12;      // press B within this many metres
@@ -34,12 +35,21 @@ export const AMMO_ITEMS = [
   { id: 'pistol', name: 'Pistol rounds', pack: 24, price: 50 },
   { id: 'shotgun', name: 'Shotgun shells', pack: 12, price: 80 },
   { id: 'rifle', name: 'Rifle rounds', pack: 30, price: 120 },
+  { id: 'smg', name: 'SMG rounds', pack: 32, price: 100 },
 ];
 
 export const WEAPON_ITEMS = [
   { id: 'pistol', name: 'Pistol', price: 0 },
   { id: 'shotgun', name: 'Shotgun', price: 1200 },
   { id: 'rifle', name: 'Rifle', price: 2500 },
+  { id: 'smg', name: 'SMG', price: 3200 },
+];
+
+// Attachments are bought for the weapon Rico currently has equipped
+// (see buyAttachment); each weapon can hold one mag and one scope.
+export const ATTACHMENT_ITEMS = [
+  { id: 'mag', name: 'Extended Magazine', price: ATTACHMENT_DEFS.mag.price },
+  { id: 'scope', name: 'Tactical Scope', price: ATTACHMENT_DEFS.scope.price },
 ];
 
 export function shopSpotById(id) {
@@ -93,6 +103,20 @@ export function buyVest() {
   addMoney(-price);
   state.vest = true;
   return { ok: true, price };
+}
+
+// Buy an attachment for the currently equipped weapon. Returns
+// { ok, reason?, price?, weapon? } like the other buy functions.
+export function buyAttachment(kind) {
+  const def = ATTACHMENT_DEFS[kind];
+  if (!def) return { ok: false, reason: 'unknown' };
+  const wid = ensureWeaponState().current;
+  if (hasAttachment(kind, wid)) return { ok: false, reason: 'owned' };
+  const price = discountedPrice(def.price);
+  if (state.money < price) return { ok: false, reason: 'funds', price };
+  addMoney(-price);
+  ownAttachment(kind, wid);
+  return { ok: true, price, weapon: wid };
 }
 
 // --- Map markers (scene only; skipped in the Node harness). -------------
@@ -210,6 +234,7 @@ export class ShopManager {
         if (kind === 'ammo') res = buyAmmo(id);
         else if (kind === 'weapon') res = buyWeapon(id);
         else if (kind === 'vest') res = buyVest();
+        else if (kind === 'attachment') res = buyAttachment(id);
         if (res && res.ok && this.onBuy) this.onBuy();
         this._renderPanel(res);
         return;
@@ -252,6 +277,19 @@ export class ShopManager {
         + (owned
           ? `<span style="color:#7dff8a;font-size:13px;font-weight:700;">OWNED</span>`
           : `<button data-buy="weapon:${item.id}" style="padding:6px 12px;font-weight:700;background:#ffb020;color:#111;border:none;border-radius:5px;cursor:pointer;">${money(price)}</button>`)
+        + `</div>`;
+    }
+    html += `<div style="font-weight:700;margin-top:10px;">Attachments — for your ${WEAPONS[weapons.current] ? WEAPONS[weapons.current].name : 'weapon'}</div>`;
+    for (const item of ATTACHMENT_ITEMS) {
+      const owned = hasAttachment(item.id, weapons.current);
+      const price = discountedPrice(item.price);
+      const def = ATTACHMENT_DEFS[item.id];
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,0.12);">`
+        + `<div style="flex:1;"><div style="font-weight:700;">${item.name}</div>`
+        + `<div style="font-size:12px;color:#bbb;">${def ? def.desc : ''}</div></div>`
+        + (owned
+          ? `<span style="color:#7dff8a;font-size:13px;font-weight:700;">FITTED</span>`
+          : `<button data-buy="attachment:${item.id}" style="padding:6px 12px;font-weight:700;background:#ffb020;color:#111;border:none;border-radius:5px;cursor:pointer;">${money(price)}</button>`)
         + `</div>`;
     }
     html += `<div style="font-weight:700;margin-top:10px;">Protection</div>`

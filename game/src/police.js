@@ -25,10 +25,15 @@ const HELI_ALTITUDE = 58;
 const ROADBLOCK_WANTED = 3;
 const ROADBLOCK_AHEAD = 48;
 
-function buildCopCarMesh() {
+const SWAT_WANTED = 5; // SWAT van rolls at 5 stars only
+const PIT_WANTED = 4;  // PIT intercept unit joins at 4 stars
+const PIT_RANGE = 3.2; // metres from the player's rear bumper to strike
+const PIT_COOLDOWN = 3; // seconds between PIT strikes from one unit
+
+function buildCopCarMesh(opts = {}) {
   const g = new THREE.Group();
   g.name = 'sbpd-interceptor';
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1c2f4a, roughness: 0.35, metalness: 0.4 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: opts.bodyColor ?? 0x1c2f4a, roughness: 0.35, metalness: 0.4 });
   const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 });
   const glassMat = new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.6 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.62, 4.6), bodyMat);
@@ -66,6 +71,56 @@ function buildCopCarMesh() {
   return g;
 }
 
+// SWAT van (5 stars): a big black armored van — taller, longer and wider
+// than an interceptor, white side stripe, roof light bar. Reads as heavy
+// at a glance; it also is heavy (250 HP, harder ram).
+function buildSwatVanMesh() {
+  const g = new THREE.Group();
+  g.name = 'sbpd-swat-van';
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x11161c, roughness: 0.4, metalness: 0.5 });
+  const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.6 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.7, 5.8), bodyMat);
+  body.position.y = 1.15;
+  body.castShadow = true;
+  g.add(body);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.54, 0.5, 4.6), whiteMat);
+  stripe.position.set(0, 1.0, 0.2);
+  g.add(stripe);
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 0.3), glassMat);
+  shield.position.set(0, 1.5, 2.85);
+  g.add(shield);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.7, 1.2), glassMat);
+  cab.position.set(0, 1.9, 2.2);
+  g.add(cab);
+  // Roof light bar + front ram bar.
+  const barMat = new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 0.5 });
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 0.35), barMat);
+  bar.position.set(0, 2.1, 2.2);
+  g.add(bar);
+  const red = new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff2222, emissiveIntensity: 1.6 });
+  const blue = new THREE.MeshStandardMaterial({ color: 0x2244ff, emissive: 0x2244ff, emissiveIntensity: 1.6 });
+  const r = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.35), red);
+  r.position.set(-0.34, 2.26, 2.2);
+  g.add(r);
+  const b = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.35), blue);
+  b.position.set(0.34, 2.26, 2.2);
+  g.add(b);
+  const ram = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.5, 0.3), barMat);
+  ram.position.set(0, 0.75, 3.0);
+  g.add(ram);
+  g.userData.lights = [r, b];
+  const wheelGeo = new THREE.CylinderGeometry(0.44, 0.44, 0.32, 12);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+  for (const [x, z] of [[-1.15, 1.8], [1.15, 1.8], [-1.15, -1.8], [1.15, -1.8]]) {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.rotation.z = Math.PI / 2;
+    w.position.set(x, 0.44, z);
+    g.add(w);
+  }
+  return g;
+}
+
 export function raiseWanted(amount) {
   return setWanted(state.wanted + amount);
 }
@@ -75,8 +130,17 @@ export function clearWanted() {
 }
 
 export class PoliceCar {
-  constructor(scene, pos) {
-    this.mesh = buildCopCarMesh();
+  // Variants (v3): 'cop' is the standard interceptor; 'swat' is the 5-star
+  // armored van (250 HP, bigger, harder ram, slightly slower); 'pit' is the
+  // 4-star PIT intercept unit (dark body, 120 HP, faster, never boxes in —
+  // it aims for the player's rear quarter instead).
+  constructor(scene, pos, opts = {}) {
+    this.variant = opts.variant || 'cop';
+    this.isSwat = this.variant === 'swat';
+    this.isPit = this.variant === 'pit';
+    this.mesh = this.isSwat
+      ? buildSwatVanMesh()
+      : buildCopCarMesh(this.isPit ? { bodyColor: 0x0e1a26 } : {});
     this.mesh.position.copy(pos);
     scene.add(this.mesh);
     this.scene = scene;
@@ -87,11 +151,19 @@ export class PoliceCar {
     this.alive = true;
     // Combat: cops can be shot. 100 HP — pistol 3 hits, shotgun ~1 close
     // blast, rifle 4 hits. A downed cop stops chasing and stops busting.
-    this.health = 100;
-    this.maxHealth = 100;
+    // The SWAT van is armored (250 HP); the PIT unit is a little tougher
+    // than a standard interceptor (120 HP).
+    this.health = this.isSwat ? 250 : this.isPit ? 120 : 100;
+    this.maxHealth = this.health;
     this.down = false;
-    this.aimHeight = 1.0;  // ray-test centre height (combat.js)
-    this.radius = 1.8;     // ray-test sphere radius (the car is a big target)
+    this.aimHeight = this.isSwat ? 1.3 : 1.0; // ray-test centre height (combat.js)
+    this.radius = this.isSwat ? 2.2 : 1.8;    // ray-test sphere radius
+    // Chase tuning per variant: SWAT is heavy (slower, rams twice as hard),
+    // the PIT unit is quick and never slows to box the player in.
+    this.topSpeedMult = this.isSwat ? 0.85 : this.isPit ? 1.15 : 1;
+    this.ramMult = this.isSwat ? 2.0 : 1;
+    this.aggressive = this.isPit;
+    this.pitCooldown = 0; // seconds until this unit may PIT again
   }
 
   // Returns 'down' when this shot neutralizes the cop, 'hit' when it only
@@ -116,6 +188,7 @@ export class PoliceCar {
 
   update(dt, targetPos, targetOnFoot, colliders, time) {
     if (this.down) return this.position.distanceTo(targetPos);
+    this.pitCooldown = Math.max(0, this.pitCooldown - dt);
     const to = targetPos.clone().sub(this.position);
     to.y = 0;
     const dist = to.length();
@@ -124,8 +197,9 @@ export class PoliceCar {
     while (dh > Math.PI) dh -= Math.PI * 2;
     while (dh < -Math.PI) dh += Math.PI * 2;
     // Box-in behaviour: if very close and target is in a car, slow and push.
-    const boxingIn = !targetOnFoot && dist < 9;
-    const targetSpeed = boxingIn ? 6 : Math.min(TUNING.policeMaxSpeed, 20 + state.wanted * 3);
+    // Aggressive (PIT) units never box in — they keep their speed to strike.
+    const boxingIn = !this.aggressive && !targetOnFoot && dist < 9;
+    const targetSpeed = boxingIn ? 6 : Math.min(TUNING.policeMaxSpeed, 20 + state.wanted * 3) * this.topSpeedMult;
     this.heading += Math.max(-2.2 * dt, Math.min(2.2 * dt, dh));
     this.speed += ((targetSpeed - this.speed) * Math.min(1, dt * 1.2));
     this.position.x += Math.sin(this.heading) * this.speed * dt;
@@ -267,6 +341,10 @@ export class PoliceHeli {
 // player, traffic and cops all collide with it. The middle gap (~4.4 m)
 // stays open — a car can thread through slowly, and on foot the player can
 // slip past — so the block slows an escape instead of trapping the player.
+// The gap is covered by a spike strip (v3): a player car driving over it
+// shreds its tires (see checkSpikeStrip + vehicles.applySpikeDamage).
+// The strip has no collider and never hurts police cars — only the player's
+// vehicle is checked against it.
 export class Roadblock {
   constructor(scene, colliders, x, z, acrossX) {
     this.scene = scene;
@@ -326,9 +404,57 @@ export class Roadblock {
       mkBarrier(-1.2, -6.2);
       mkBarrier(1.2, 6.2);
     }
+    // Spike strip across the drivable gap: a low dark strip with steel
+    // teeth. It sits in the middle of the gap so threading the block costs
+    // tires — the gap is still passable, just not for free.
+    const stripLen = 4.4;
+    const strip = new THREE.Group();
+    strip.name = 'sbpd-spike-strip';
+    const stripBase = new THREE.Mesh(
+      new THREE.BoxGeometry(acrossX ? stripLen : 0.9, 0.08, acrossX ? 0.9 : stripLen),
+      new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.7 }),
+    );
+    stripBase.position.y = 0.06;
+    strip.add(stripBase);
+    const toothGeo = new THREE.ConeGeometry(0.09, 0.34, 4);
+    const toothMat = new THREE.MeshStandardMaterial({ color: 0xb8c0c8, roughness: 0.3, metalness: 0.9 });
+    const teeth = Math.floor(stripLen / 0.55);
+    for (let i = 0; i < teeth; i++) {
+      const t = new THREE.Mesh(toothGeo, toothMat);
+      const along = -stripLen / 2 + 0.3 + i * 0.55;
+      t.position.set(acrossX ? along : 0, 0.2, acrossX ? 0 : along);
+      strip.add(t);
+    }
+    this.group.add(strip);
+    // World-space footprint of the strip (no collider — cars drive over it).
+    this.spike = {
+      x, z,
+      halfX: acrossX ? stripLen / 2 : 0.45,
+      halfZ: acrossX ? 0.45 : stripLen / 2,
+      lastHitBy: new Map(), // vehicle id -> elapsed time of last shred
+    };
     scene.add(this.group);
     this.position = this.group.position;
     this.alive = true;
+  }
+
+  // Spike-strip check, called by the manager for the player's vehicle only
+  // (police cars are never checked, so they are never hurt by it). A hit
+  // shreds the vehicle's tires (see vehicles.applySpikeDamage) and returns
+  // true. One hit per vehicle per 3 s so a slow crawl over the strip does
+  // not stack the damage instantly.
+  checkSpikeStrip(vehicle, time) {
+    if (!vehicle || !this.spike || vehicle.wrecked) return false;
+    const s = this.spike;
+    const dx = Math.abs(vehicle.position.x - s.x);
+    const dz = Math.abs(vehicle.position.z - s.z);
+    const r = (vehicle.stats && vehicle.stats.radius) || 1.6;
+    if (dx > s.halfX + r * 0.6 || dz > s.halfZ + r * 0.6) return false;
+    const last = s.lastHitBy.get(vehicle.id) ?? -99;
+    if (time - last < 3) return false;
+    s.lastHitBy.set(vehicle.id, time);
+    vehicle.applySpikeDamage();
+    return true;
   }
 
   update(time) {
@@ -368,6 +494,8 @@ export class PoliceManager {
     this.heli = null;       // PoliceHeli while wanted >= 4
     this.roadblock = null;  // Roadblock while wanted >= 3
     this.roadblockTimer = 0;
+    this.swat = null;       // v3: SWAT van while wanted >= 5
+    this.pit = null;        // v3: PIT intercept unit while wanted >= 4
     // v3: driver-skill modifiers from the crew system, set by main.js each
     // frame ({ bustHoldMult, decayMult }); null means no crew bonus.
     this.crewModifiers = null;
@@ -375,7 +503,16 @@ export class PoliceManager {
 
   wantedCount() { return Math.min(state.wanted, MAX_WANTED); }
 
-  _spawnOne(targetPos) {
+  // Every shootable police unit that is still up: interceptors + the SWAT
+  // van + the PIT unit. main.js feeds this to the combat target provider.
+  shootables() {
+    const out = this.cops.filter((c) => !c.down);
+    if (this.swat && !this.swat.down) out.push(this.swat);
+    if (this.pit && !this.pit.down) out.push(this.pit);
+    return out;
+  }
+
+  _spawnOne(targetPos, variant = 'cop') {
     const depot = spawnPoint('policeDepot');
     const angle = this.rng() * Math.PI * 2;
     const dist = 55 + this.rng() * 35;
@@ -384,9 +521,9 @@ export class PoliceManager {
       0,
       Math.max(-CITY.halfSize, Math.min(CITY.halfSize, targetPos.z + Math.sin(angle) * dist)),
     );
-    if (this.cops.length === 0) pos.copy(depot);
-    const cop = new PoliceCar(this.scene, pos);
-    this.cops.push(cop);
+    if (this.cops.length === 0 && variant === 'cop') pos.copy(depot);
+    const cop = new PoliceCar(this.scene, pos, { variant });
+    if (variant === 'cop') this.cops.push(cop);
     return cop;
   }
 
@@ -396,6 +533,30 @@ export class PoliceManager {
     while (this.cops.length > want) {
       const cop = this.cops.pop();
       if (cop) cop.dispose();
+    }
+  }
+
+  // SWAT van: one armored van at 5 stars, gone below 5. It is a separate
+  // unit from the interceptor count — at 5 stars the player faces 5 cops
+  // plus the van.
+  _syncSwat(targetPos) {
+    if (state.wanted >= SWAT_WANTED && !this.swat) {
+      this.swat = this._spawnOne(targetPos, 'swat');
+    } else if (state.wanted < SWAT_WANTED && this.swat) {
+      this.swat.dispose();
+      this.swat = null;
+    }
+  }
+
+  // PIT intercept unit: one at 4-5 stars, gone below 4. It does not bust
+  // the player — its job is to hit the player's rear quarter and spin the
+  // car out (see _pitStrike below).
+  _syncPit(targetPos) {
+    if (state.wanted >= PIT_WANTED && !this.pit) {
+      this.pit = this._spawnOne(targetPos, 'pit');
+    } else if (state.wanted < PIT_WANTED && this.pit) {
+      this.pit.dispose();
+      this.pit = null;
     }
   }
 
@@ -456,6 +617,50 @@ export class PoliceManager {
     }
   }
 
+  // Aim point for the PIT unit: the player's rear quarter — 4.5 m behind
+  // the car and 2.2 m to whichever side the unit is already on, so it
+  // swings in from the flank instead of queuing up dead astern.
+  _pitAimPoint(player) {
+    const car = player.vehicle;
+    if (!car) return player.position.clone();
+    const fx = Math.sin(car.heading);
+    const fz = Math.cos(car.heading);
+    const rx = this.pit.position.x - car.position.x;
+    const rz = this.pit.position.z - car.position.z;
+    const side = (rx * fz - rz * fx) >= 0 ? 1 : -1;
+    return new THREE.Vector3(
+      car.position.x - fx * 4.5 + fz * 2.2 * side,
+      0,
+      car.position.z - fz * 4.5 - fx * 2.2 * side,
+    );
+  }
+
+  // A PIT strike lands when the unit reaches the player's rear bumper: the
+  // player's car loses 70% of its speed and is spun ~50° toward the
+  // striking side, and the unit sheds speed too. One strike per unit per
+  // PIT_COOLDOWN seconds, so a single unit cannot stun-lock the player.
+  // Returns true when a strike landed.
+  _pitStrike(car) {
+    const pit = this.pit;
+    if (!pit || pit.pitCooldown > 0) return false;
+    const fx = Math.sin(car.heading);
+    const fz = Math.cos(car.heading);
+    const rearX = car.position.x - fx * 2.3;
+    const rearZ = car.position.z - fz * 2.3;
+    const dist = Math.hypot(pit.position.x - rearX, pit.position.z - rearZ);
+    if (dist > PIT_RANGE) return false;
+    const dx = pit.position.x - car.position.x;
+    const dz = pit.position.z - car.position.z;
+    const side = (dx * fz - dz * fx) >= 0 ? 1 : -1;
+    car.speed *= 0.3;
+    car.heading += side * 0.85;
+    if (car.mesh) car.mesh.rotation.y = car.heading;
+    pit.speed *= 0.4;
+    pit.pitCooldown = PIT_COOLDOWN;
+    damagePlayer(6);
+    return true;
+  }
+
   commitCrime(amount) {
     const before = state.wanted;
     raiseWanted(amount);
@@ -468,9 +673,15 @@ export class PoliceManager {
     const heading = player.vehicle ? player.vehicle.heading : player.heading;
     this._syncCount(targetPos);
     this._syncHeli(targetPos);
+    this._syncSwat(targetPos);
+    this._syncPit(targetPos);
     this._syncRoadblock(targetPos, heading, dt);
     if (this.heli) this.heli.update(dt, targetPos, time);
-    if (this.roadblock) this.roadblock.update(time);
+    if (this.roadblock) {
+      this.roadblock.update(time);
+      // Spike strips only ever hurt the player's vehicle (see Roadblock).
+      if (player.vehicle) this.roadblock.checkSpikeStrip(player.vehicle, time);
+    }
     const inCar = !player.onFoot;
     const dists = [];
     for (const cop of this.cops) {
@@ -496,6 +707,25 @@ export class PoliceManager {
       } else {
         cop.bustTimer = Math.max(0, cop.bustTimer - dt * 2);
       }
+    }
+    // SWAT van: chases like an interceptor but rams twice as hard (ramMult).
+    // It never busts — busting stays with the on-foot cops.
+    if (this.swat && !this.swat.down) {
+      const dist = this.swat.update(dt, targetPos, player.onFoot, this.colliders, time);
+      dists.push(dist);
+      if (inCar && dist < RAM_RANGE) {
+        const car = player.vehicle;
+        if (car) car.speed *= Math.max(0, 1 - 1.6 * this.swat.ramMult * dt);
+        damagePlayer(2 * this.swat.ramMult * dt);
+      }
+    }
+    // PIT unit: aims at the player's rear quarter and strikes when it
+    // reaches the rear bumper — the car is spun out, not just slowed.
+    if (this.pit && !this.pit.down) {
+      const pitAim = this._pitAimPoint(player);
+      const dist = this.pit.update(dt, pitAim, false, this.colliders, time);
+      dists.push(dist);
+      if (inCar && player.vehicle) this._pitStrike(player.vehicle);
     }
     // Wanted decay: only when no cop can see the player. The helicopter
     // keeps the player seen while it is overhead, so wanted cannot decay
@@ -523,6 +753,8 @@ export class PoliceManager {
     this.cops = [];
     if (this.heli) { this.heli.dispose(); this.heli = null; }
     if (this.roadblock) { this.roadblock.dispose(); this.roadblock = null; }
+    if (this.swat) { this.swat.dispose(); this.swat = null; }
+    if (this.pit) { this.pit.dispose(); this.pit = null; }
     this.roadblockTimer = 0;
     this.busted = false;
     this.decayTimer = 0;

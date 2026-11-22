@@ -258,11 +258,11 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
-  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C),
+  // Controls hint: add the v2 keys (weapons 1/2/3/4, garage G, radio C),
   // the v3 crew key (K), and the v3 shop / safehouse keys (B, E, T).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio · K crew · B shop · E save / T travel at safehouse';
+    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio · K crew · B shop · E save / T travel at safehouse';
   }
 
   let lastObjective = '';
@@ -316,12 +316,13 @@ export function createHud(deps = {}) {
       const mph = player && player.vehicle ? Math.round(player.vehicle.speedMph) : 0;
       refs.speed.textContent = player && !player.onFoot ? `${mph} MPH` : '';
     }
-    // Weapon slots + ammo (combat): three slots, active one highlighted.
+    // Weapon slots + ammo (combat): four slots, active one highlighted.
+    // Unowned weapons show their shop price; fitted attachments tag along.
     if (refs.weapons && player && player.combat) {
       const c = player.combat;
-      const order = ['pistol', 'shotgun', 'rifle'];
-      const labels = { pistol: '1 PISTOL', shotgun: '2 SHOTGUN', rifle: '3 RIFLE' };
-      const names = { pistol: 'Pistol', shotgun: 'Shotgun', rifle: 'Rifle' };
+      const order = ['pistol', 'shotgun', 'rifle', 'smg'];
+      const labels = { pistol: '1 PISTOL', shotgun: '2 SHOTGUN', rifle: '3 RIFLE', smg: '4 SMG' };
+      const names = { pistol: 'Pistol', shotgun: 'Shotgun', rifle: 'Rifle', smg: 'SMG' };
       let html = '';
       for (const id of order) {
         const a = c.ammo(id);
@@ -332,7 +333,11 @@ export function createHud(deps = {}) {
           html += `<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:#999;font-size:12px;font-weight:600;">${labels[id]} <span style="color:#ffb020;">🔒 $${price.toLocaleString('en-US')} at shop</span></div>`;
           continue;
         }
-        html += `<div style="padding:4px 8px;border-radius:4px;background:${active ? 'rgba(255,210,63,0.9)' : 'rgba(0,0,0,0.55)'};color:${active ? '#111' : '#ddd'};font-size:12px;font-weight:${active ? 800 : 600};text-shadow:none;">${labels[id]} <span style="opacity:${active ? 1 : 0.75}">${a.mag}/${a.reserve}</span></div>`;
+        const atts = [];
+        if (c.hasAttachment && c.hasAttachment('mag', id)) atts.push('EXT MAG');
+        if (c.hasAttachment && c.hasAttachment('scope', id)) atts.push('SCOPE');
+        const attTag = atts.length ? ` <span style="color:#7dff8a;font-size:10px;">${atts.join(' · ')}</span>` : '';
+        html += `<div style="padding:4px 8px;border-radius:4px;background:${active ? 'rgba(255,210,63,0.9)' : 'rgba(0,0,0,0.55)'};color:${active ? '#111' : '#ddd'};font-size:12px;font-weight:${active ? 800 : 600};text-shadow:none;">${labels[id]} <span style="opacity:${active ? 1 : 0.75}">${a.mag}/${a.reserve}</span>${attTag}</div>`;
       }
       const status = c.reloading
         ? 'RELOADING…'

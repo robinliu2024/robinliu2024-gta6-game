@@ -35,17 +35,20 @@ export function createInitialState() {
     // Persisted in the save.
     vest: false,
     // Weapon system (combat.js): current weapon + mag/reserve ammo per tier
-    // + which weapons are owned (pistol is Rico's; shotgun / rifle are
-    // bought at Solmar Arms). Persisted since v3 — older saves without an
-    // `owned` block keep all three (see applySave).
+    // + which weapons are owned (pistol is Rico's; shotgun / rifle / SMG
+    // are bought at Solmar Arms) + shop-bought attachments per weapon
+    // (mag: +50% mag, scope: tighter spread). Persisted since v3 — older
+    // saves without an `owned` block keep the first three (see applySave).
     weapons: {
       current: 'pistol',
-      owned: { pistol: true, shotgun: false, rifle: false },
+      owned: { pistol: true, shotgun: false, rifle: false, smg: false },
       ammo: {
         pistol: { mag: 12, reserve: 48 },
         shotgun: { mag: 6, reserve: 24 },
         rifle: { mag: 30, reserve: 90 },
+        smg: { mag: 32, reserve: 96 },
       },
+      attachments: { mag: {}, scope: {} },
     },
     // Runtime-only refs (never saved): filled in by main.js / gameplay parts.
     player: null,   // { position, heading, onFoot, vehicle }
@@ -167,11 +170,15 @@ export function saveShape() {
       totalEarned: (state.territory && state.territory.totalEarned) || 0,
     },
     vest: !!state.vest,
-    // Weapons (combat.js / shop.js, v3): current + ammo + ownership.
+    // Weapons (combat.js / shop.js, v3): current + ammo + ownership +
+    // attachments (extended mag / scope, per weapon).
     weapons: {
       current: (state.weapons && state.weapons.current) || 'pistol',
       owned: { ...((state.weapons && state.weapons.owned) || {}) },
       ammo: JSON.parse(JSON.stringify((state.weapons && state.weapons.ammo) || {})),
+      attachments: JSON.parse(JSON.stringify(
+        (state.weapons && state.weapons.attachments) || { mag: {}, scope: {} },
+      )),
     },
     distanceDriven: Math.round(state.distanceDriven),
     playSeconds: Math.round(state.playSeconds),
@@ -236,19 +243,26 @@ export function applySave(data) {
   // Older saves have no vest; default to unprotected.
   state.vest = !!data.vest;
   // Older saves have no weapons block (pre-v3 saves were runtime-only);
-  // those runs keep all three weapons. New saves restore ownership.
+  // those runs keep the first three weapons (the SMG is new in v3, so it
+  // stays locked). New saves restore ownership + attachments.
   const savedWeapons = data.weapons || {};
   const owned = savedWeapons.owned;
+  const savedAttachments = savedWeapons.attachments || {};
   state.weapons = {
     current: savedWeapons.current || 'pistol',
     owned: owned
-      ? { pistol: true, shotgun: false, rifle: false, ...owned }
-      : { pistol: true, shotgun: true, rifle: true },
+      ? { pistol: true, shotgun: false, rifle: false, smg: false, ...owned }
+      : { pistol: true, shotgun: true, rifle: true, smg: false },
     ammo: {
       pistol: { mag: 12, reserve: 48 },
       shotgun: { mag: 6, reserve: 24 },
       rifle: { mag: 30, reserve: 90 },
+      smg: { mag: 32, reserve: 96 },
       ...(savedWeapons.ammo || {}),
+    },
+    attachments: {
+      mag: { ...(savedAttachments.mag || {}) },
+      scope: { ...(savedAttachments.scope || {}) },
     },
   };
   return true;
