@@ -258,11 +258,27 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
+  // Cover badge (v3, Builder 4): shows while Rico is crouched behind
+  // cover — the spread / damage bonuses only apply in that state.
+  let coverEl = el('hud-cover');
+  if (!coverEl && refs.hud) {
+    coverEl = document.createElement('div');
+    coverEl.id = 'hud-cover';
+    coverEl.style.cssText = [
+      'position:absolute', 'right:14px', 'top:86px',
+      'background:rgba(20,60,40,0.8)', 'color:#7dff8a', 'font-size:13px', 'font-weight:800',
+      'padding:5px 10px', 'border-radius:6px', 'border:1px solid #37d67a',
+      'display:none', 'white-space:nowrap', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(coverEl);
+  }
+
   // Controls hint: add the v2 keys (weapons 1/2/3/4, garage G, radio C),
   // the v3 crew key (K), and the v3 shop / safehouse keys (B, E, T).
+  // C is the radio in a car and the crouch key on foot (v3 cover).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio · K crew · B shop · E save / T travel at safehouse';
+    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse';
   }
 
   let lastObjective = '';
@@ -311,6 +327,19 @@ export function createHud(deps = {}) {
     const player = getPlayer();
     if (refs.district && player) {
       refs.district.textContent = districtAt(player.position.x, player.position.z).name;
+    }
+    // Cover badge: crouched behind cover reads as IN COVER (steady aim,
+    // less damage); crouched in the open reads as CROUCHED.
+    if (coverEl && player) {
+      if (player.inCover) {
+        coverEl.textContent = 'IN COVER — steady aim · -40% damage';
+        coverEl.style.display = 'block';
+      } else if (player.crouching) {
+        coverEl.textContent = 'CROUCHED — get behind cover';
+        coverEl.style.display = 'block';
+      } else {
+        coverEl.style.display = 'none';
+      }
     }
     if (refs.speed) {
       const mph = player && player.vehicle ? Math.round(player.vehicle.speedMph) : 0;

@@ -109,6 +109,8 @@ safehouses.onTravel = (spot) => {
 const effects = new Effects(scene, { lowQuality: state.lowQuality });
 effects.subscribeToPlayer(player);
 world.effects = effects; // v3: crew gunner tracers go through effects
+// v3: foot cops shoot tracers through the same effects module.
+police.effects = effects;
 // v3: explosions need the effects module for fire / smoke / shockwave.
 vehicles.effects = effects;
 // Combat targets: live cops (downed ones stop being targets) + living peds
@@ -295,7 +297,7 @@ function animate() {
     // v2: day/night cycle drives the vehicles' headlights (lamps, beams,
     // and the driven car's spotlight) — updateCity advanced the cycle above.
     vehicles.setNight(city.dayNight ? city.dayNight.nightFactor : 0);
-    effects.update(delta);
+    effects.update(delta, player.position, city.dayNight ? city.dayNight.rain.intensity : 0);
     // Garage toggle (G) — v2: handled outside the garageOpen gate so G
     // closes the panel too. Opening freezes the world (see the gate below).
     if (state.started && !state.gameOver && input.wasPressed('garage') && !shopOpen) {
@@ -312,10 +314,17 @@ function animate() {
     if (state.started && !state.gameOver && !garageOpen && !shopOpen) {
       // Shot mode: drive / chase auto-accelerate so the shot reads at speed.
       if (shotSetup && shotSetup.autoDrive) input.held.up = true;
-      // Radio (C) — v2: cycle the synth stations while playing.
+      // Radio (C) — v2: cycle the synth stations while driving. On foot
+      // C is the crouch key instead (v3 cover shootouts): the radio only
+      // makes sense in a car, and the crouch only makes sense on foot.
       if (input.wasPressed('radio')) {
-        const name = audio.cycleRadio();
-        hud.toast(name ? `RADIO · ${name}` : 'RADIO OFF');
+        if (player.onFoot) {
+          const crouched = player.toggleCrouch();
+          hud.toast(crouched ? 'CROUCHED — get behind cover to steady your aim' : 'Standing up');
+        } else {
+          const name = audio.cycleRadio();
+          hud.toast(name ? `RADIO · ${name}` : 'RADIO OFF');
+        }
       }
       // Crew panel (K) — v3: recruit Vic / Lena when REP allows.
       if (input.wasPressed('crew')) {
@@ -382,7 +391,7 @@ function animate() {
               police.commitCrime(2);
               pedestrians.scareAll(player.position, 40);
               // v3: three police downs in one unowned zone capture it.
-              if (police.cops.includes(hit.target)) {
+              if (police.isCopUnit(hit.target)) {
                 territory.recordCopDown(player.position.x, player.position.z);
               }
             }
@@ -391,7 +400,7 @@ function animate() {
           audio.dryFire();
         }
       }
-      player.update(delta, input, camYaw, city.colliders);
+      player.update(delta, input, camYaw, city.colliders, vehicles.vehicles);
       vehicles.update(delta, input, player);
       // v2: near-miss driving — pass a traffic car close at speed for +REP.
       if (player.vehicle && player.vehicle.speedMph > 25 && elapsed - lastNearMissAt > 5) {

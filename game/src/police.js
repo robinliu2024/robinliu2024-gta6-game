@@ -30,6 +30,23 @@ const PIT_WANTED = 4;  // PIT intercept unit joins at 4 stars
 const PIT_RANGE = 3.2; // metres from the player's rear bumper to strike
 const PIT_COOLDOWN = 3; // seconds between PIT strikes from one unit
 
+// Foot pursuit (v3, Builder 4): when Rico is on foot and wanted, nearby
+// interceptors park and their officers chase on foot instead of just
+// ramming. A foot cop runs the player down, busts on contact (same hold
+// as a car cop), and shoots from mid-range — reusing the crew gunner's
+// tracer + hit-chance pattern. Cover matters: shots at a player in cover
+// hit far less often, and the damage that does land is reduced by
+// player.takeDamage's cover reduction.
+const FOOT_COP_MAX = 3;            // at most this many officers on foot
+const FOOT_COP_DISMOUNT_RANGE = 55; // car must be this close to dismount
+const FOOT_COP_SPEED = 6.8;        // faster than a walk, slower than a sprint
+const FOOT_COP_SHOOT_RANGE = 30;   // opens fire inside this range
+const FOOT_COP_SHOOT_MIN_RANGE = 4; // closer than this, it goes for the bust
+const FOOT_COP_SHOOT_INTERVAL = 1.3; // seconds between shots
+const FOOT_COP_DAMAGE = 8;         // HP per hit (before cover reduction)
+const FOOT_COP_HIT_CHANCE = 0.55;  // in the open
+const FOOT_COP_HIT_CHANCE_COVER = 0.3; // against a player in cover
+
 function buildCopCarMesh(opts = {}) {
   const g = new THREE.Group();
   g.name = 'sbpd-interceptor';
@@ -164,6 +181,10 @@ export class PoliceCar {
     this.ramMult = this.isSwat ? 2.0 : 1;
     this.aggressive = this.isPit;
     this.pitCooldown = 0; // seconds until this unit may PIT again
+    // v3 foot pursuit (Builder 4): a parked interceptor has its officer
+    // out on foot (see CopOnFoot); a parked car does not move or ram.
+    this.parked = false;
+    this.footCop = null;
   }
 
   // Returns 'down' when this shot neutralizes the cop, 'hit' when it only
@@ -192,6 +213,14 @@ export class PoliceCar {
     const to = targetPos.clone().sub(this.position);
     to.y = 0;
     const dist = to.length();
+    // Parked (officer on foot): the car stays put, lights still flashing.
+    if (this.parked) {
+      const phase = Math.floor(time * 6) % 2 === 0;
+      const [r, b] = this.mesh.userData.lights;
+      r.material.emissiveIntensity = phase ? 2.2 : 0.2;
+      b.material.emissiveIntensity = phase ? 0.2 : 2.2;
+      return dist;
+    }
     const want = Math.atan2(to.x, to.z);
     let dh = want - this.heading;
     while (dh > Math.PI) dh -= Math.PI * 2;
@@ -214,6 +243,148 @@ export class PoliceCar {
     r.material.emissiveIntensity = phase ? 2.2 : 0.2;
     b.material.emissiveIntensity = phase ? 0.2 : 2.2;
     return dist;
+  }
+
+  dispose() {
+    this.scene.remove(this.mesh);
+    this.alive = false;
+  }
+}
+
+function buildCopOnFootMesh() {
+  const g = new THREE.Group();
+  g.name = 'sbpd-officer';
+  const navy = new THREE.MeshStandardMaterial({ color: 0x1c2f4a, roughness: 0.8 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0xc98d5f, roughness: 0.8 });
+  const pants = new THREE.MeshStandardMaterial({ color: 0x141a22, roughness: 0.9 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x10151d, roughness: 0.7 });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.72, 0.34), navy);
+  torso.position.y = 1.06;
+  torso.castShadow = true;
+  g.add(torso);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.32), skin);
+  head.position.y = 1.62;
+  g.add(head);
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.36), capMat);
+  cap.position.y = 1.84;
+  g.add(cap);
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.64, 0.24), pants);
+  legL.position.set(-0.16, 0.32, 0);
+  g.add(legL);
+  const legR = legL.clone();
+  legR.position.x = 0.16;
+  g.add(legR);
+  // Pistol in hand, held low while running.
+  const gun = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.1, 0.34),
+    new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5, metalness: 0.6 }),
+  );
+  gun.position.set(0.42, 0.95, 0.2);
+  g.add(gun);
+  g.userData.legs = [legL, legR];
+  return g;
+}
+
+// A police officer on foot (v3, Builder 4): spawned when a nearby
+// interceptor parks during a foot chase. Reuses the pedestrian movement
+// pattern (steer toward a target, circle-vs-box collision, leg swing)
+// and the crew gunner's shooting pattern (tracer + hit chance). Same
+// combat interface as other police units: 100 HP, 'down' | 'hit' | null.
+export class CopOnFoot {
+  constructor(scene, pos, car) {
+    this.scene = scene;
+    this.car = car || null; // the parked interceptor this officer came from
+    this.mesh = buildCopOnFootMesh();
+    this.mesh.position.copy(pos);
+    scene.add(this.mesh);
+    this.position = this.mesh.position;
+    this.heading = 0;
+    this.speed = FOOT_COP_SPEED;
+    this.walkPhase = Math.random() * 6;
+    this.health = 100;
+    this.maxHealth = 100;
+    this.aimHeight = 1.1;
+    this.radius = 0.6;
+    this.bustTimer = 0;
+    this.fireTimer = 0.6 + Math.random() * 0.6;
+    this.down = false;
+    this.alive = true;
+  }
+
+  takeDamage(amount) {
+    if (this.down) return null;
+    this.health -= amount;
+    if (this.health <= 0) {
+      this.health = 0;
+      this.down = true;
+      this.alive = false;
+      this.bustTimer = 0;
+      this.mesh.rotation.z = Math.PI / 2;
+      this.mesh.position.y = 0.3;
+      return 'down';
+    }
+    return 'hit';
+  }
+
+  // Chase the player on foot. Returns 'bust' when the hold completes,
+  // null otherwise. `effects` (tracers / muzzle flash) is optional.
+  update(dt, player, colliders, effects, bustHoldMult = 1) {
+    if (this.down || !player || player.wasted) return null;
+    const to = player.position.clone().sub(this.position);
+    to.y = 0;
+    const dist = to.length();
+    // Bust: in range, hold the player down (same hold as a car cop).
+    if (dist < BUST_RANGE) {
+      this.bustTimer += dt;
+      if (this.bustTimer >= BUST_HOLD_SECONDS * bustHoldMult) return 'bust';
+    } else {
+      this.bustTimer = Math.max(0, this.bustTimer - dt * 2);
+    }
+    // Shoot: mid-range, one aimed shot per interval. A player in cover is
+    // much harder to hit, and the damage that lands is reduced by
+    // player.takeDamage's cover reduction.
+    if (dist > FOOT_COP_SHOOT_MIN_RANGE && dist < FOOT_COP_SHOOT_RANGE) {
+      this.fireTimer -= dt;
+      if (this.fireTimer <= 0) {
+        this.fireTimer = FOOT_COP_SHOOT_INTERVAL * (0.85 + Math.random() * 0.3);
+        const from = this.position.clone();
+        from.y += 1.4;
+        const aim = player.position.clone();
+        aim.y += player.crouching ? 0.9 : 1.3;
+        if (effects && typeof effects.spawnTracer === 'function') {
+          effects.spawnTracer(from, aim);
+          if (typeof effects.spawnMuzzle === 'function') {
+            const dir = aim.clone().sub(from).normalize();
+            effects.spawnMuzzle(from, dir);
+          }
+        }
+        const hitChance = player.inCover ? FOOT_COP_HIT_CHANCE_COVER : FOOT_COP_HIT_CHANCE;
+        if (Math.random() < hitChance && typeof player.takeDamage === 'function') {
+          player.takeDamage(FOOT_COP_DAMAGE);
+        }
+      }
+    }
+    // Chase: steer toward the player like a pedestrian, collide with walls.
+    // Inside bust range the officer stops and holds the player instead of
+    // running past them (otherwise the hold could never complete).
+    if (dist >= BUST_RANGE) {
+      const want = Math.atan2(to.x, to.z);
+      let dh = want - this.heading;
+      while (dh > Math.PI) dh -= Math.PI * 2;
+      while (dh < -Math.PI) dh += Math.PI * 2;
+      this.heading += Math.max(-2.4 * dt, Math.min(2.4 * dt, dh));
+      this.position.x += Math.sin(this.heading) * this.speed * dt;
+      this.position.z += Math.cos(this.heading) * this.speed * dt;
+      this.position.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.x));
+      this.position.z = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.z));
+      collideCircle(this.position, 0.45, colliders);
+      this.mesh.rotation.y = this.heading;
+      this.walkPhase += dt * this.speed * 2.4;
+      const swing = Math.sin(this.walkPhase) * 0.45;
+      this.mesh.userData.legs[0].rotation.x = swing;
+      this.mesh.userData.legs[1].rotation.x = -swing;
+    }
+    return null;
   }
 
   dispose() {
@@ -496,6 +667,10 @@ export class PoliceManager {
     this.roadblockTimer = 0;
     this.swat = null;       // v3: SWAT van while wanted >= 5
     this.pit = null;        // v3: PIT intercept unit while wanted >= 4
+    this.footCops = [];     // v3: officers on foot (see CopOnFoot)
+    // v3: effects module for foot-cop tracers / muzzle flashes; set by
+    // main.js (null is fine — foot cops still shoot, just without tracers).
+    this.effects = null;
     // v3: driver-skill modifiers from the crew system, set by main.js each
     // frame ({ bustHoldMult, decayMult }); null means no crew bonus.
     this.crewModifiers = null;
@@ -504,12 +679,21 @@ export class PoliceManager {
   wantedCount() { return Math.min(state.wanted, MAX_WANTED); }
 
   // Every shootable police unit that is still up: interceptors + the SWAT
-  // van + the PIT unit. main.js feeds this to the combat target provider.
+  // van + the PIT unit + officers on foot. main.js feeds this to the
+  // combat target provider.
   shootables() {
     const out = this.cops.filter((c) => !c.down);
     if (this.swat && !this.swat.down) out.push(this.swat);
     if (this.pit && !this.pit.down) out.push(this.pit);
+    for (const fc of this.footCops) if (!fc.down) out.push(fc);
     return out;
+  }
+
+  // True for any police unit (car, van, PIT unit, foot officer) — used by
+  // main.js so downing a foot cop counts for turf like downing a car cop.
+  isCopUnit(t) {
+    return this.cops.includes(t) || this.swat === t || this.pit === t
+      || this.footCops.includes(t);
   }
 
   _spawnOne(targetPos, variant = 'cop') {
@@ -532,7 +716,57 @@ export class PoliceManager {
     while (this.cops.length < want) this._spawnOne(targetPos);
     while (this.cops.length > want) {
       const cop = this.cops.pop();
-      if (cop) cop.dispose();
+      if (cop) {
+        if (cop.footCop) this._despawnFootCop(cop.footCop);
+        cop.dispose();
+      }
+    }
+  }
+
+  // Foot pursuit: park a nearby interceptor and send its officer out on
+  // foot. Only while Rico is on foot and wanted; at most FOOT_COP_MAX
+  // officers, and never more than the wanted level. When Rico gets in a
+  // car, loses the heat, or is wasted, the officers get back in their cars
+  // (despawn) and the interceptors resume driving.
+  _spawnFootCop(cop) {
+    const fc = new CopOnFoot(this.scene, cop.position.clone(), cop);
+    cop.parked = true;
+    cop.footCop = fc;
+    this.footCops.push(fc);
+    return fc;
+  }
+
+  _despawnFootCop(fc) {
+    const i = this.footCops.indexOf(fc);
+    if (i !== -1) this.footCops.splice(i, 1);
+    if (fc.car) {
+      fc.car.parked = false;
+      fc.car.footCop = null;
+    }
+    fc.dispose();
+  }
+
+  _syncFootCops(player) {
+    const onFootChase = player.onFoot && !player.wasted && state.wanted > 0;
+    if (!onFootChase) {
+      for (const fc of [...this.footCops]) this._despawnFootCop(fc);
+      return;
+    }
+    // A downed car's officer stands down with it.
+    for (const fc of [...this.footCops]) {
+      if (fc.car && fc.car.down) this._despawnFootCop(fc);
+    }
+    const cap = Math.min(state.wanted, FOOT_COP_MAX);
+    while (this.footCops.length < cap) {
+      let best = null;
+      let bestD = FOOT_COP_DISMOUNT_RANGE;
+      for (const cop of this.cops) {
+        if (cop.down || cop.parked) continue;
+        const d = cop.position.distanceTo(player.position);
+        if (d < bestD) { bestD = d; best = cop; }
+      }
+      if (!best) break;
+      this._spawnFootCop(best);
     }
   }
 
@@ -676,6 +910,7 @@ export class PoliceManager {
     this._syncSwat(targetPos);
     this._syncPit(targetPos);
     this._syncRoadblock(targetPos, heading, dt);
+    this._syncFootCops(player);
     if (this.heli) this.heli.update(dt, targetPos, time);
     if (this.roadblock) {
       this.roadblock.update(time);
@@ -727,6 +962,20 @@ export class PoliceManager {
       dists.push(dist);
       if (inCar && player.vehicle) this._pitStrike(player.vehicle);
     }
+    // Foot officers: chase on foot, bust on contact, shoot from mid-range.
+    // A downed officer stops; their parked car stays parked until the
+    // heat is off (see _syncFootCops).
+    const bustHoldMult = this.crewModifiers?.bustHoldMult ?? 1;
+    for (const fc of [...this.footCops]) {
+      if (fc.down) continue;
+      dists.push(fc.position.distanceTo(targetPos));
+      const res = fc.update(dt, player, this.colliders, this.effects, bustHoldMult);
+      if (res === 'bust' && !this.busted) {
+        this.busted = true;
+        state.gameOver = true;
+        if (this.onBusted) this.onBusted();
+      }
+    }
     // Wanted decay: only when no cop can see the player. The helicopter
     // keeps the player seen while it is overhead, so wanted cannot decay
     // at 4-5 stars — drop to 3 stars and the chopper leaves, and decay
@@ -751,6 +1000,7 @@ export class PoliceManager {
   reset() {
     for (const cop of this.cops) cop.dispose();
     this.cops = [];
+    for (const fc of [...this.footCops]) this._despawnFootCop(fc);
     if (this.heli) { this.heli.dispose(); this.heli = null; }
     if (this.roadblock) { this.roadblock.dispose(); this.roadblock = null; }
     if (this.swat) { this.swat.dispose(); this.swat = null; }

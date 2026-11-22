@@ -6,11 +6,39 @@
 import * as THREE from 'three';
 import { CITY, TUNING, PLAYER_HEALTH } from './config.js';
 import { state, damagePlayer, healPlayer } from './state.js';
-import { Combat } from './combat.js';
+import { Combat, COVER_DAMAGE_MULT } from './combat.js';
 
 const PUNCH_RANGE = 2.2;
 const PUNCH_DAMAGE = 25;
 const PUNCH_COOLDOWN = 0.45;
+// Cover shootouts (v3, Builder 4): crouched within this distance of a
+// wall / car / roadblock edge, Rico counts as "in cover" — tighter shots
+// (see combat.js COVER_SPREAD_MULT) and 40% less incoming damage.
+export const COVER_CHECK_RANGE = 2.0;
+const CROUCH_SPEED_MULT = 0.55;
+const CROUCH_SCALE_Y = 0.72;
+
+// Is `pos` close enough to something solid to hide behind? Uses the
+// existing box colliders (buildings, roadblocks) plus live vehicles
+// (parked / traffic cars, wrecked ones do not count — a burning wreck is
+// no cover). Pure function so the harness can test it without a scene.
+export function isNearCover(pos, colliders, vehicles) {
+  for (const c of colliders || []) {
+    const nx = Math.max(c.x - c.halfX, Math.min(pos.x, c.x + c.halfX));
+    const nz = Math.max(c.z - c.halfZ, Math.min(pos.z, c.z + c.halfZ));
+    const dx = pos.x - nx;
+    const dz = pos.z - nz;
+    if (dx * dx + dz * dz <= COVER_CHECK_RANGE * COVER_CHECK_RANGE) return true;
+  }
+  for (const v of vehicles || []) {
+    if (!v || v.wrecked || !v.position) continue;
+    const r = (v.stats && v.stats.radius) || v.radius || 1.6;
+    const dx = pos.x - v.position.x;
+    const dz = pos.z - v.position.z;
+    if (dx * dx + dz * dz <= (r + 1.2) * (r + 1.2)) return true;
+  }
+  return false;
+}
 
 function clampToCity(v) {
   v.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, v.x));
@@ -89,6 +117,11 @@ export class Player {
     this.wasted = false;
     this.punchTimer = 0;
     this.walkPhase = 0;
+    // v3 cover shootouts (Builder 4): C on foot toggles the crouch.
+    // inCover is recomputed every frame in update(): crouched AND next to
+    // something solid. Standing up or stepping away clears it again.
+    this.crouching = false;
+    this.inCover = false;
     this.health = state.health;
     this.combat = new Combat();   // weapon system: pistol / shotgun / rifle / SMG
     this._targetProvider = null;  // fn() -> shootable targets, set by main.js
@@ -102,6 +135,25 @@ export class Player {
   selectWeapon(id) { return this.combat.select(id); }
   cycleWeapon(dir) { return this.combat.cycle(dir); }
   reloadWeapon() { return this.combat.startReload(); }
+
+  // Crouch / stand (C on foot — the radio owns C while driving). Crouching
+  // alone is just a low stance; the cover bonuses only apply while
+  // crouched next to something solid (see update()).
+  toggleCrouch() {
+    if (!this.onFoot || this.wasted) return false;
+    this.crouching = !this.crouching;
+    this.mesh.scale.y = this.crouching ? CROUCH_SCALE_Y : 1;
+    if (!this.crouching) {
+      this.inCover = false;
+      this.combat.coverBonus = false;
+    }
+    return this.crouching;
+  }
+
+  setCrouch(on) {
+    if (!!on !== this.crouching) return this.toggleCrouch();
+    return this.crouching;
+  }
 
   // Effects (part C) subscribes: onShoot(({from, dir, hitPoint}) => ...)
   onShoot(fn) { this._shootListeners.push(fn); return () => { this._shootListeners = this._shootListeners.filter((f) => f !== fn); }; }
@@ -128,7 +180,7 @@ export class Player {
   // so the caller can play a dry-fire click.
   shoot(camera) {
     if (!this.onFoot || this.wasted) return false;
-    const from = this.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+    const from = this.position.clone().add(new THREE.Vector3(0, this.crouching ? 1.1 : 1.5, 0));
     const dir = new THREE.Vector3();
     if (camera) camera.getWorldDirection(dir);
     else dir.set(Math.sin(this.heading), 0, Math.cos(this.heading));
@@ -165,7 +217,10 @@ export class Player {
 
   takeDamage(amount) {
     if (this.wasted) return 0;
-    const left = damagePlayer(amount);
+    // In cover, incoming damage is reduced 40% (after the crouch check —
+    // standing in the open never gets the reduction, even next to a wall).
+    const taken = this.inCover ? amount * COVER_DAMAGE_MULT : amount;
+    const left = damagePlayer(taken);
     this.health = left;
     if (left <= 0) {
       this.wasted = true;
@@ -186,19 +241,31 @@ export class Player {
     state.health = PLAYER_HEALTH;
     state.gameOver = false;
     this.wasted = false;
+    this.crouching = false;
+    this.inCover = false;
+    this.combat.coverBonus = false;
+    this.mesh.scale.y = 1;
     this.mesh.rotation.z = 0;
     this.mesh.position.copy(startPos);
     this.mesh.position.y = 0;
     this.heading = 0;
   }
 
-  update(dt, inp, cameraYaw, colliders) {
+  update(dt, inp, cameraYaw, colliders, coverVehicles) {
     this.combat.update(dt); // reload / fire cooldown keep ticking in a car too
+    // Getting in a car stands Rico back up: cover only ever applies on foot.
+    if (!this.onFoot && this.crouching) {
+      this.crouching = false;
+      this.inCover = false;
+      this.combat.coverBonus = false;
+      this.mesh.scale.y = 1;
+    }
     if (this.wasted || !this.onFoot) return;
     this.punchTimer = Math.max(0, this.punchTimer - dt);
     const axes = inp.axes();
-    const sprint = inp.sprinting;
-    const speed = sprint ? TUNING.runSpeed : TUNING.walkSpeed;
+    const sprint = inp.sprinting && !this.crouching;
+    const speed = (sprint ? TUNING.runSpeed : TUNING.walkSpeed)
+      * (this.crouching ? CROUCH_SPEED_MULT : 1);
     // Camera-relative movement: forward is where the camera looks.
     const sin = Math.sin(cameraYaw);
     const cos = Math.cos(cameraYaw);
@@ -228,8 +295,13 @@ export class Player {
     this.mesh.rotation.y = this.heading;
     clampToCity(this.position);
     collideCircle(this.position, 0.5, colliders);
+    // Cover check: crouched AND next to a wall, a car or a roadblock.
+    // Standing up or stepping away from the solid object clears it, and
+    // the spread / damage bonuses go away with it.
+    this.inCover = this.crouching && isNearCover(this.position, colliders, coverVehicles);
+    this.combat.coverBonus = this.inCover;
     // Keep the shared state pointer in sync for HUD / missions / police.
-    state.player = { position: this.position, heading: this.heading, onFoot: this.onFoot, vehicle: this.vehicle };
+    state.player = { position: this.position, heading: this.heading, onFoot: this.onFoot, vehicle: this.vehicle, crouching: this.crouching, inCover: this.inCover };
   }
 }
 

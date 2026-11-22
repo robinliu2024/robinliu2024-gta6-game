@@ -16,7 +16,8 @@ const DAY_STOPS = [
   { t: 0.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
   { t: 0.15, sun: 2.60, sunColor: 0xfff1d6, hemi: 0.90, sky: 0x87b5e0, fog: 0x9fc3e8, night: 0 },
   { t: 0.45, sun: 2.20, sunColor: 0xffe0b0, hemi: 0.80, sky: 0x7fa8d8, fog: 0x9ab8dd, night: 0 },
-  { t: 0.55, sun: 0.80, sunColor: 0xff8a4a, hemi: 0.45, sky: 0xb45a6e, fog: 0xc07a6a, night: 0.50 },
+  // Dusk golden hour: low warm sun, pink-orange sky. The game opens here.
+  { t: 0.55, sun: 1.05, sunColor: 0xff8a3d, hemi: 0.48, sky: 0xc65a5e, fog: 0xc07a5e, night: 0.45 },
   { t: 0.65, sun: 0.28, sunColor: 0x8aa0c8, hemi: 0.38, sky: 0x0e1a2e, fog: 0x14243a, night: 1 },
   { t: 0.85, sun: 0.32, sunColor: 0x93a8d0, hemi: 0.40, sky: 0x0c1626, fog: 0x122032, night: 1 },
   { t: 1.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
@@ -137,9 +138,11 @@ export function buildCity(scene, options = {}) {
   scene.fog = new THREE.Fog(0x9fc3e8, 420, 1100);
 
   // --- Ground: grass/concrete base, plus a sand beach strip on the west. ---
+  // groundMat is kept so the rain can darken it / make it glossier (wet).
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x7d9b6a, roughness: 1 });
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(CITY.halfSize * 2 + CITY.oceanWidth + 80, CITY.halfSize * 2 + 80),
-    new THREE.MeshStandardMaterial({ color: 0x7d9b6a, roughness: 1 }),
+    groundMat,
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(-CITY.oceanWidth / 2 + 40, 0, 0);
@@ -310,11 +313,35 @@ export function buildCity(scene, options = {}) {
 
   // --- Day/night controller: lerps the lights / sky / fog between the
   // keyframes above, and switches the street lamps + clouds with it.
-  // Starts mid-morning so the first screenshots are in daylight.
+  // Starts at dusk golden hour (t = 0.53) so the first screenshots are in
+  // warm low light with long shadows; the 240 s cycle keeps running from
+  // there (night follows ~30 s later, then dawn, then noon).
+  // --- Weather: occasional light rain. Dry spells last 2.5–6.5 minutes,
+  // a shower lasts 30–60 s. Rain is visual/atmospheric only — it never
+  // changes gameplay numbers (speed, damage, wanted). It closes the fog
+  // in, dims the sun, greys the sky and wets the ground (darker, glossier).
+  const weatherRng = makeRng(seed + 999);
+  const rain = {
+    active: false,
+    intensity: 0, // 0 = dry, 1 = full shower; ramps in/out over ~3 s
+    dryTimer: 150 + weatherRng() * 90, // seconds until the first shower
+    duration: 0, // seconds left of the current shower
+  };
   const dayNight = {
-    time: 0.18,
+    time: 0.53,
     nightFactor: 0,
     length: DAY_LENGTH,
+    rain,
+    // Force a shower now (used by tests / shot mode); duration in seconds.
+    startRain(duration = 30 + weatherRng() * 30) {
+      rain.active = true;
+      rain.duration = duration;
+    },
+    stopRain() {
+      rain.active = false;
+      rain.duration = 0;
+      rain.dryTimer = 150 + weatherRng() * 150;
+    },
     setTime(t) {
       this.time = ((t % 1) + 1) % 1;
       const { a, b, f } = dayNightStopsAt(this.time);
@@ -327,8 +354,55 @@ export function buildCity(scene, options = {}) {
       lampMat.emissiveIntensity = 0.3 + lerp(a.night, b.night) * 2.2;
       cloudMat.color.lerpColors(_cA.setHex(0xffffff), _cB.setHex(0x2a3a55), lerp(a.night, b.night));
       this.nightFactor = lerp(a.night, b.night);
+      // Sun path: rises in the east (t = 0), peaks at midday (t ~ 0.31),
+      // sets in the west (t ~ 0.62) — low at golden hour, so shadows run
+      // long. After dusk the light is moonlight from a fixed high angle.
+      const DAY_SPAN = 0.62;
+      if (this.time < DAY_SPAN) {
+        const ang = (this.time / DAY_SPAN) * Math.PI;
+        sun.position.set(Math.cos(ang) * 420, 30 + Math.sin(ang) * 320, 140);
+      } else {
+        sun.position.set(-200, 300, -140);
+      }
+      // Rain look: fog closes in, sun + sky dim and grey, ground gets wet.
+      const ri = rain.intensity;
+      if (ri > 0) {
+        scene.fog.near = 420 - 220 * ri;
+        scene.fog.far = 1100 - 450 * ri;
+        sun.intensity *= (1 - 0.25 * ri);
+        hemi.intensity *= (1 - 0.15 * ri);
+        scene.background.lerp(_cA.setHex(0x707880), ri * 0.45);
+        scene.fog.color.lerp(_cA.setHex(0x707880), ri * 0.45);
+        cloudMat.color.lerp(_cA.setHex(0x4a5560), ri * 0.5);
+        groundMat.color.lerpColors(_cA.setHex(0x7d9b6a), _cB.setHex(0x5d7350), ri * 0.5);
+        groundMat.roughness = 1 - 0.5 * ri;
+      } else {
+        scene.fog.near = 420;
+        scene.fog.far = 1100;
+        groundMat.color.setHex(0x7d9b6a);
+        groundMat.roughness = 1;
+      }
     },
-    update(dt) { this.setTime(this.time + dt / DAY_LENGTH); },
+    update(dt) {
+      // Weather state machine first, then the light: setTime reads the
+      // rain intensity, so the fog / sun / ground change on the same
+      // frame the shower starts or stops.
+      if (rain.active) {
+        rain.duration -= dt;
+        if (rain.duration <= 0) {
+          rain.active = false;
+          rain.dryTimer = 150 + weatherRng() * 150;
+        }
+      } else {
+        rain.dryTimer -= dt;
+        if (rain.dryTimer <= 0) this.startRain();
+      }
+      // Intensity eases toward its target: ~3 s to full rain, ~4 s to dry.
+      const target = rain.active ? 1 : 0;
+      const step = target === 1 ? dt / 3 : dt / 4;
+      rain.intensity = Math.min(1, Math.max(0, rain.intensity + (target === 1 ? step : -step)));
+      this.setTime(this.time + dt / DAY_LENGTH);
+    },
   };
   dayNight.setTime(dayNight.time);
 

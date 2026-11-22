@@ -10,6 +10,13 @@
 // and tactical scope (tighter spread). They persist on state.weapons
 // (see ensureWeaponState / saveShape / applySave in state.js).
 
+// Cover-shootout bonus (v3, Builder 4): firing from behind cover —
+// crouched next to a wall, car or roadblock — halves the weapon spread.
+// COVER_DAMAGE_MULT is applied in player.takeDamage: shots that reach a
+// player in cover hurt 40% less.
+export const COVER_SPREAD_MULT = 0.5;
+export const COVER_DAMAGE_MULT = 0.6;
+
 import * as THREE from 'three';
 import { state } from './state.js';
 
@@ -178,6 +185,10 @@ export class Combat {
     this.cooldown = 0;      // seconds until the next shot may fire
     this.reloading = false;
     this.reloadTimer = 0;
+    // v3 cover bonus (Builder 4): set by the player when crouched behind
+    // cover; halves the effective spread of the next shots. Crew gunners
+    // never set this — it only ever applies to Rico's own Combat instance.
+    this.coverBonus = false;
     this._tmp = new THREE.Vector3();
     this._tmpDir = new THREE.Vector3();
   }
@@ -279,7 +290,8 @@ export class Combat {
       const up = Math.abs(d.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
       const right = new THREE.Vector3().crossVectors(d, up).normalize();
       const up2 = new THREE.Vector3().crossVectors(right, d).normalize();
-      const spread = effectiveSpread(w.id);
+      // Cover bonus: crouched behind cover, the shot groups half as wide.
+      const spread = effectiveSpread(w.id) * (this.coverBonus ? COVER_SPREAD_MULT : 1);
       const sx = (rng() * 2 - 1) * spread;
       const sy = (rng() * 2 - 1) * spread;
       const ray = d.clone()

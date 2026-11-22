@@ -58,6 +58,58 @@ export class Effects {
     this._skidMat = new THREE.MeshBasicMaterial({
       color: 0x0a0a0a, transparent: true, opacity: 0.55, depthWrite: false,
     });
+    // Rain (v3, Builder 4): a box of fast-falling drops centred on the
+    // focus point (the player). Invisible while dry — update() drives the
+    // draw range from the weather intensity the city reports.
+    this._rainCount = this.lowQuality ? 350 : 600;
+    this._rainGeo = new THREE.BufferGeometry();
+    this._rainPositions = new Float32Array(this._rainCount * 3);
+    this._rainSpeed = new Float32Array(this._rainCount);
+    this._rainGeo.setAttribute('position', new THREE.BufferAttribute(this._rainPositions, 3));
+    this._rainPoints = new THREE.Points(this._rainGeo, new THREE.PointsMaterial({
+      color: 0xaebfd0, size: 0.32, transparent: true, opacity: 0,
+      depthWrite: false, sizeAttenuation: true,
+    }));
+    this._rainPoints.frustumCulled = false;
+    this._rainGeo.setDrawRange(0, 0);
+    this._rainInit = false;
+    scene.add(this._rainPoints);
+  }
+
+  // Scatter the rain drops in a box around `focus` (called once, then the
+  // drops recycle inside the same box as they fall).
+  _initRain(focus) {
+    for (let i = 0; i < this._rainCount; i++) {
+      this._rainPositions[i * 3] = focus.x + (Math.random() - 0.5) * 70;
+      this._rainPositions[i * 3 + 1] = Math.random() * 40;
+      this._rainPositions[i * 3 + 2] = focus.z + (Math.random() - 0.5) * 70;
+      this._rainSpeed[i] = 26 + Math.random() * 10;
+    }
+    this._rainInit = true;
+  }
+
+  // Rain fall step: drops fall fast with a slight slant, recycle to the
+  // top of the box when they hit the ground. `intensity` 0 hides them.
+  _updateRain(dt, focus, intensity) {
+    if (!this._rainInit) this._initRain(focus || new THREE.Vector3());
+    const n = Math.floor(this._rainCount * intensity);
+    this._rainGeo.setDrawRange(0, n);
+    this._rainPoints.material.opacity = 0.55 * intensity;
+    if (n <= 0) return;
+    const fx = focus ? focus.x : 0;
+    const fz = focus ? focus.z : 0;
+    for (let i = 0; i < n; i++) {
+      let y = this._rainPositions[i * 3 + 1] - this._rainSpeed[i] * dt;
+      // Slight wind slant while falling.
+      this._rainPositions[i * 3] += 2.5 * dt;
+      if (y < 0) {
+        y = 36 + Math.random() * 4;
+        this._rainPositions[i * 3] = fx + (Math.random() - 0.5) * 70;
+        this._rainPositions[i * 3 + 2] = fz + (Math.random() - 0.5) * 70;
+      }
+      this._rainPositions[i * 3 + 1] = y;
+    }
+    this._rainGeo.attributes.position.needsUpdate = true;
   }
 
   // Screen shake: main.js adds the returned offset to the camera each frame.
@@ -189,7 +241,9 @@ export class Effects {
     }
   }
 
-  update(dt) {
+  update(dt, focus, rainIntensity = 0) {
+    // Rain: drops fall around the focus point while a shower is on.
+    this._updateRain(dt, focus, Math.max(0, Math.min(1, rainIntensity)));
     // Particles: integrate, apply gravity, compact the dead ones.
     let n = 0;
     for (let i = 0; i < this._count; i++) {
@@ -278,10 +332,13 @@ export class Effects {
   dispose() {
     this.scene.remove(this._points);
     this.scene.remove(this._smokePoints);
+    this.scene.remove(this._rainPoints);
     this._geo.dispose();
     this._smokeGeo.dispose();
+    this._rainGeo.dispose();
     this._points.material.dispose();
     this._smokePoints.material.dispose();
+    this._rainPoints.material.dispose();
     for (const s of this.shockwaves) {
       this.scene.remove(s.mesh);
       s.mesh.geometry.dispose();
