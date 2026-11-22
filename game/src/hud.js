@@ -145,6 +145,20 @@ export function createHud(deps = {}) {
         ctx.arc(mapX(cop.position.x), mapY(cop.position.z), 3, 0, Math.PI * 2);
         ctx.fill();
       }
+      // Helicopter overhead (cyan ring) and roadblock (orange squares).
+      if (police.heli) {
+        ctx.strokeStyle = '#4dd8ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(mapX(police.heli.position.x), mapY(police.heli.position.z), 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (police.roadblock) {
+        ctx.fillStyle = '#ff9a1a';
+        for (const { collider } of police.roadblock.entries) {
+          ctx.fillRect(mapX(collider.x) - 3, mapY(collider.z) - 3, 6, 6);
+        }
+      }
     }
     const player = getPlayer();
     if (player) {

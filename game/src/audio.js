@@ -14,6 +14,10 @@ class AudioEngine {
     this.sirenOsc = null;
     this.sirenGain = null;
     this.sirenTimer = null;
+    this.rotorOsc = null;
+    this.rotorGain = null;
+    this.rotorLfo = null;
+    this.rotorLfoGain = null;
     this.ready = false;
   }
 
@@ -189,6 +193,47 @@ class AudioEngine {
         this.sirenGain = null;
         gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
         setTimeout(() => { try { osc.stop(); } catch { /* already stopped */ } }, 400);
+      }
+    } catch { /* audio unavailable */ }
+  }
+
+  // Helicopter rotor chop while the air unit is overhead: a low sawtooth
+  // through a lowpass, with an 11 Hz LFO chopping its gain.
+  heli(on) {
+    if (!this.ready || !this.ctx) return;
+    try {
+      if (on && !this.rotorOsc) {
+        this.rotorOsc = this.ctx.createOscillator();
+        this.rotorGain = this.ctx.createGain();
+        this.rotorOsc.type = 'sawtooth';
+        this.rotorOsc.frequency.value = 55;
+        this.rotorGain.gain.value = 0;
+        this.rotorLfo = this.ctx.createOscillator();
+        this.rotorLfoGain = this.ctx.createGain();
+        this.rotorLfo.type = 'sine';
+        this.rotorLfo.frequency.value = 11;
+        this.rotorLfoGain.gain.value = 0.025;
+        this.rotorLfo.connect(this.rotorLfoGain);
+        this.rotorLfoGain.connect(this.rotorGain.gain);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 220;
+        this.rotorOsc.connect(filter);
+        filter.connect(this.rotorGain);
+        this.rotorGain.connect(this.master);
+        this.rotorOsc.start();
+        this.rotorLfo.start();
+        this.rotorGain.gain.setTargetAtTime(0.05, this.ctx.currentTime, 0.3);
+      } else if (!on && this.rotorOsc) {
+        const osc = this.rotorOsc;
+        const lfo = this.rotorLfo;
+        const gain = this.rotorGain;
+        this.rotorOsc = null;
+        this.rotorLfo = null;
+        this.rotorGain = null;
+        this.rotorLfoGain = null;
+        gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.15);
+        setTimeout(() => { try { osc.stop(); lfo.stop(); } catch { /* already stopped */ } }, 500);
       }
     } catch { /* audio unavailable */ }
   }

@@ -270,6 +270,7 @@ function animate() {
       missions.update(delta);
       audio.engine(player.onFoot ? 0 : (player.vehicle ? player.vehicle.speedMph : 0));
       audio.siren(state.wanted > 0 && police.cops.length > 0);
+      audio.heli(!!police.heli);
       updateFollowCamera(delta);
       // Autosave every 15s while playing (save manager, part C).
       saveManager.autosave(delta, true);
@@ -278,6 +279,7 @@ function animate() {
       gameOverShown = true;
       audio.engineOff();
       audio.siren(false);
+      audio.heli(false);
       if (player.wasted) missions.failMission('wasted');
       show(gameoverScreen, true);
     }
