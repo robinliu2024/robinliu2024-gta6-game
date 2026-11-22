@@ -19,6 +19,8 @@ import { Effects } from './effects.js';
 import { createSaveManager } from './save.js';
 import { createGarageUI, applyPaintTo, RACE_WIN_BONUS_REP, NEAR_MISS_REP } from './garage.js';
 import { CrewManager } from './crew.js';
+import { TerritoryManager } from './territory.js';
+import { ShopManager, SafehouseManager } from './shop.js';
 import { applyShotSetup } from './shots.js';
 
 // --- URL query parsing: ?shot=, &seed=, &lq=1. Stored for part 3 shot mode. ---
@@ -75,6 +77,31 @@ crew.onRecruit = (def) => {
   hud.toast(`${def.name} joined your crew — ${def.skillName}!`, 3500);
 };
 
+// v3: territory + shops & safehouses (Builder 2). The territory manager
+// fills the world.territory slot the M10 hook already calls.
+const territory = new TerritoryManager(scene);
+world.territory = territory;
+territory.onCapture = (def) => {
+  audio.sting();
+  hud.toast(`TURF TAKEN — ${def.name} is yours! +$400/day`, 4000);
+};
+territory.onIncome = (amount, count) => {
+  hud.toast(`Turf income +$${amount.toLocaleString('en-US')} (${count} zone${count > 1 ? 's' : ''})`, 3500);
+};
+// Owned turf calms the locals: pedestrians stop fleeing gunfire there.
+pedestrians.calmAt = (pos) => territory.isOwnedAt(pos.x, pos.z);
+const shop = new ShopManager(scene);
+world.shop = shop;
+shop.onBuy = () => audio.click();
+const safehouses = new SafehouseManager(scene, { getPlayer: () => player });
+world.safehouses = safehouses;
+safehouses.onSave = (ok) => {
+  hud.toast(ok ? 'Game saved at the safehouse' : 'Could not save — storage unavailable', 3000);
+};
+safehouses.onTravel = (spot) => {
+  hud.toast(`Fast travel — ${spot.name}`, 3000);
+};
+
 // Part C systems: HUD, particles/skids/tracers/shake, save manager.
 const effects = new Effects(scene, { lowQuality: state.lowQuality });
 effects.subscribeToPlayer(player);
@@ -118,6 +145,9 @@ const hud = createHud({
   getPolice: () => police,
   getMissions: () => missions,
   getCrew: () => crew,
+  getTerritory: () => territory,
+  getShop: () => shop,
+  getSafehouses: () => safehouses,
   getDialogue: () => ({ text: dialogueText, active: elapsed - dialogueAt < 5 }),
 });
 function updateHud() {
@@ -138,6 +168,18 @@ function openGarage() {
 function closeGarage() {
   garageOpen = false;
   garageUI.close();
+}
+
+// --- Shop (v3): B opens the panel near a shop; the world freezes while
+// it is open (but the HUD keeps updating). Esc closes the shop before pausing.
+let shopOpen = false;
+function openShop() {
+  shopOpen = true;
+  shop.openPanel();
+}
+function closeShop() {
+  shopOpen = false;
+  shop.closePanel();
 }
 
 // --- Menus: start screen / pause / game over (wired minimally for part A). ---
@@ -183,6 +225,7 @@ for (const id of ['btn-restart', 'btn-again']) {
 function togglePause() {
   if (!state.started || state.gameOver) return;
   if (garageOpen) { closeGarage(); return; }
+  if (shopOpen) { closeShop(); return; }
   state.paused = !state.paused;
   show(pauseScreen, state.paused);
   audio.click();
@@ -248,11 +291,18 @@ function animate() {
     effects.update(delta);
     // Garage toggle (G) — v2: handled outside the garageOpen gate so G
     // closes the panel too. Opening freezes the world (see the gate below).
-    if (state.started && !state.gameOver && input.wasPressed('garage')) {
+    if (state.started && !state.gameOver && input.wasPressed('garage') && !shopOpen) {
       if (garageOpen) closeGarage(); else openGarage();
       audio.click();
     }
-    if (state.started && !state.gameOver && !garageOpen) {
+    // Shop toggle (B) — v3: handled outside the shopOpen gate so B closes
+    // the panel too. Only opens near a Solmar Arms shop.
+    if (state.started && !state.gameOver && input.wasPressed('shop') && !garageOpen) {
+      if (shopOpen) closeShop();
+      else if (shop.isNearShop(player.position.x, player.position.z)) { openShop(); audio.click(); }
+      else hud.toast('No shop nearby — Solmar Arms: Downtown & Harbor');
+    }
+    if (state.started && !state.gameOver && !garageOpen && !shopOpen) {
       // Shot mode: drive / chase auto-accelerate so the shot reads at speed.
       if (shotSetup && shotSetup.autoDrive) input.held.up = true;
       // Radio (C) — v2: cycle the synth stations while playing.
@@ -265,15 +315,24 @@ function animate() {
         crew.togglePanel();
         audio.click();
       }
-      // Enter / exit car.
+      // Enter / exit car. At a safehouse on foot with no car close by,
+      // E saves the game instead (v3).
       if (input.wasPressed('enter')) {
         if (player.onFoot) {
           const car = vehicles.nearestTo(player.position, 5);
-          if (car) { car.enter(player); audio.click(); }
+          if (!car && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
+            safehouses.saveHere();
+            audio.click();
+          } else if (car) { car.enter(player); audio.click(); }
         } else if (player.vehicle) {
           player.vehicle.exit(player);
           audio.click();
         }
+      }
+      // Fast travel between safehouses (T) — v3.
+      if (input.wasPressed('travel')) {
+        const dest = safehouses.travel(player.position.x, player.position.z);
+        if (dest) audio.click();
       }
       // Punch.
       if (input.wasPressed('punch') && player.onFoot) {
@@ -314,6 +373,10 @@ function animate() {
               state.kills += 1;
               police.commitCrime(2);
               pedestrians.scareAll(player.position, 40);
+              // v3: three police downs in one unowned zone capture it.
+              if (police.cops.includes(hit.target)) {
+                territory.recordCopDown(player.position.x, player.position.z);
+              }
             }
           }
         } else if (res && res.empty) {
@@ -343,9 +406,17 @@ function animate() {
         effects.addSkid({ x: bx, z: bz }, car.heading);
       }
       pedestrians.update(delta);
-      police.crewModifiers = crew.policeModifiers(); // v3: driver softens busts + decay
+      // v3: the crew driver and owned turf both soften the police
+      // response; the modifiers multiply through the same channel.
+      const crewMods = crew.policeModifiers();
+      const turfMods = territory.policeModifiers(player.position.x, player.position.z);
+      police.crewModifiers = {
+        bustHoldMult: crewMods.bustHoldMult * turfMods.bustHoldMult,
+        decayMult: crewMods.decayMult * turfMods.decayMult,
+      };
       police.update(delta, player, elapsed);
       crew.update(delta);
+      territory.update(delta);
       missions.update(delta);
       audio.engine(player.onFoot ? 0 : (player.vehicle ? player.vehicle.speedMph : 0));
       audio.siren(state.wanted > 0 && police.cops.length > 0);
@@ -388,6 +459,9 @@ window.__game = {
   police,
   missions,
   crew,
+  territory,
+  shop,
+  safehouses,
   input,
   audio,
   hud,

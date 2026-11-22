@@ -6,6 +6,8 @@
 import { CITY, MAX_WANTED } from './config.js';
 import { state, currentMission, currentObjective } from './state.js';
 import { repTier } from './garage.js';
+import { TERRITORY_ZONES, COP_DOWNS_TO_CAPTURE, INCOME_PER_ZONE_PER_DAY } from './territory.js';
+import { WEAPON_ITEMS } from './shop.js';
 import { roadLines, districtAt } from './city.js';
 
 const WORLD = CITY.halfSize; // world x/z run -320..320
@@ -19,6 +21,9 @@ export function createHud(deps = {}) {
   const getPolice = deps.getPolice || (() => null);
   const getMissions = deps.getMissions || (() => null);
   const getCrew = deps.getCrew || (() => null);
+  const getTerritory = deps.getTerritory || (() => null);
+  const getShop = deps.getShop || (() => null);
+  const getSafehouses = deps.getSafehouses || (() => null);
   // Dialogue hold: main.js owns the timer; we only ask whether a line is
   // still live and what it says, and never overwrite it while it is live.
   const getDialogue = deps.getDialogue || (() => ({ text: '', active: false }));
@@ -80,6 +85,36 @@ export function createHud(deps = {}) {
     refs.hud.appendChild(crewEl);
   }
   refs.crew = crewEl;
+
+  // Territory panel (v3): three zones, owned state + income, capture hint.
+  let turfEl = el('hud-turf');
+  if (!turfEl && refs.hud) {
+    turfEl = document.createElement('div');
+    turfEl.id = 'hud-turf';
+    turfEl.style.cssText = [
+      'position:absolute', 'right:18px', 'bottom:270px', 'width:200px',
+      'font-family:inherit', 'pointer-events:none',
+      'background:rgba(0,0,0,0.55)', 'border-radius:6px', 'padding:8px 10px',
+      'color:#fff', 'font-size:12px', 'font-weight:600',
+    ].join(';');
+    refs.hud.appendChild(turfEl);
+  }
+  refs.turf = turfEl;
+
+  // Proximity hint (v3): shop / safehouse keys when standing near one.
+  let hintEl = el('hud-hint');
+  if (!hintEl && refs.hud) {
+    hintEl = document.createElement('div');
+    hintEl.id = 'hud-hint';
+    hintEl.style.cssText = [
+      'position:absolute', 'left:50%', 'bottom:150px', 'transform:translateX(-50%)',
+      'background:rgba(0,0,0,0.65)', 'color:#ffd23f', 'font-size:14px', 'font-weight:700',
+      'padding:6px 14px', 'border-radius:6px', 'text-shadow:0 1px 4px rgba(0,0,0,0.9)',
+      'display:none', 'white-space:nowrap', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(hintEl);
+  }
+  refs.hint = hintEl;
 
   // Crosshair, shown only while on foot with the pointer locked.
   let crossEl = el('hud-crosshair');
@@ -223,11 +258,11 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
-  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C) and
-  // the v3 crew key (K).
+  // Controls hint: add the v2 keys (weapons 1/2/3, garage G, radio C),
+  // the v3 crew key (K), and the v3 shop / safehouse keys (B, E, T).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio · K crew';
+    controlsEl.textContent += ' · 1/2/3 weapons · G garage · C radio · K crew · B shop · E save / T travel at safehouse';
   }
 
   let lastObjective = '';
@@ -291,6 +326,12 @@ export function createHud(deps = {}) {
       for (const id of order) {
         const a = c.ammo(id);
         const active = c.currentId === id;
+        const owned = c.owns ? c.owns(id) : true;
+        if (!owned) {
+          const price = (WEAPON_ITEMS.find((w) => w.id === id) || {}).price || 0;
+          html += `<div style="padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.55);color:#999;font-size:12px;font-weight:600;">${labels[id]} <span style="color:#ffb020;">🔒 $${price.toLocaleString('en-US')} at shop</span></div>`;
+          continue;
+        }
         html += `<div style="padding:4px 8px;border-radius:4px;background:${active ? 'rgba(255,210,63,0.9)' : 'rgba(0,0,0,0.55)'};color:${active ? '#111' : '#ddd'};font-size:12px;font-weight:${active ? 800 : 600};text-shadow:none;">${labels[id]} <span style="opacity:${active ? 1 : 0.75}">${a.mag}/${a.reserve}</span></div>`;
       }
       const status = c.reloading
@@ -320,6 +361,43 @@ export function createHud(deps = {}) {
         }
         if (refs.crew.innerHTML !== html) refs.crew.innerHTML = html;
         refs.crew.style.display = 'flex';
+      }
+    }
+    // Territory panel (v3): owned zones pay $400/day each; unowned zones
+    // show the free-capture progress (3 police downs in the zone).
+    if (refs.turf) {
+      const territory = getTerritory();
+      const owned = territory ? territory.owned : [];
+      let html = '<div style="font-weight:800;color:#ffd23f;font-size:13px;margin-bottom:4px;">TURF — Solmar Bay</div>';
+      for (const zone of TERRITORY_ZONES) {
+        const isOwned = owned.includes(zone.id);
+        const progress = territory ? territory.copDownsIn(zone.id) : 0;
+        const line = isOwned
+          ? `<span style="color:#7dff8a;">OWNED · +$${INCOME_PER_ZONE_PER_DAY}/day</span>`
+          : (zone.id === 'downtown'
+            ? `<span style="color:#bbb;">M10 takes it · or ${progress}/${COP_DOWNS_TO_CAPTURE} cop downs</span>`
+            : `<span style="color:#bbb;">${progress}/${COP_DOWNS_TO_CAPTURE} cop downs to take</span>`);
+        html += `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;"><span>${zone.name}</span>${line}</div>`;
+      }
+      if (refs.turf.innerHTML !== html) refs.turf.innerHTML = html;
+    }
+    // Proximity hint (v3): shop / safehouse keys when standing near one.
+    if (refs.hint && player) {
+      const shop = getShop();
+      const safehouses = getSafehouses();
+      const hints = [];
+      if (shop && shop.isNearShop(player.position.x, player.position.z)) {
+        hints.push('B — Solmar Arms shop');
+      }
+      if (safehouses && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
+        hints.push('E — Save game · T — Travel · G — Garage');
+      }
+      const text = hints.join(' &nbsp;·&nbsp; ');
+      if (text) {
+        refs.hint.innerHTML = text;
+        refs.hint.style.display = 'block';
+      } else {
+        refs.hint.style.display = 'none';
       }
     }
     // Crosshair: on foot, started, not game over.

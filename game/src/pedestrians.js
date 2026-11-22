@@ -141,15 +141,22 @@ export class PedestrianManager {
     this.rng = makeRng(opts.seed ?? 1);
     this.colliders = opts.colliders || [];
     this.peds = [];
+    // v3: territory calm — fn(pos) => true when the ped stands on turf
+    // Rico owns. Set by main.js; null means everywhere is nervous.
+    this.calmAt = null;
     const count = opts.lowQuality ? 10 : 18;
     for (let i = 0; i < count; i++) this.peds.push(new Pedestrian(scene, this.rng, this.colliders));
   }
 
-  // Everyone nearby runs from a point (gunfire, crash, police chase).
+  // Everyone nearby runs from a point (gunfire, crash, police chase) —
+  // except on turf Rico owns, where the locals stand their ground.
   scareAll(from, radius = 40) {
     for (const p of this.peds) {
       if (!p.alive) continue;
-      if (p.position.distanceTo(from) < radius) p.fleeFrom(from, 4);
+      if (p.position.distanceTo(from) < radius) {
+        if (this.calmAt && this.calmAt(p.position)) continue;
+        p.fleeFrom(from, 4);
+      }
     }
   }
 

@@ -33,10 +33,12 @@ export const WEAPONS = {
 export const WEAPON_ORDER = ['pistol', 'shotgun', 'rifle'];
 
 // Ammo lives on the shared state object so HUD / saves can read it; the
-// Combat instance is the only writer.
+// Combat instance is the only writer. Ownership (shop.js, v3): the pistol
+// is Rico's from the start; shotgun / rifle are bought at Solmar Arms.
+// A state without an `owned` block (pre-v3 save) keeps all three weapons.
 export function ensureWeaponState() {
   if (!state.weapons) {
-    state.weapons = { current: 'pistol', ammo: {} };
+    state.weapons = { current: 'pistol', owned: {}, ammo: {} };
   }
   if (!state.weapons.ammo) state.weapons.ammo = {};
   for (const id of WEAPON_ORDER) {
@@ -46,8 +48,27 @@ export function ensureWeaponState() {
       state.weapons.ammo[id] = { mag: def.magSize, reserve: def.reserveAmmo };
     }
   }
+  if (!state.weapons.owned || typeof state.weapons.owned !== 'object') {
+    // No ownership record: a pre-v3 save — grandfather all three.
+    state.weapons.owned = { pistol: true, shotgun: true, rifle: true };
+  } else {
+    for (const id of WEAPON_ORDER) {
+      if (typeof state.weapons.owned[id] !== 'boolean') state.weapons.owned[id] = id === 'pistol';
+    }
+  }
   if (!WEAPONS[state.weapons.current]) state.weapons.current = 'pistol';
   return state.weapons;
+}
+
+// Mark a weapon as owned (shop purchase, or the combat shot setup).
+export function ownWeapon(id) {
+  if (!WEAPONS[id]) return false;
+  ensureWeaponState().owned[id] = true;
+  return true;
+}
+
+export function isOwned(id) {
+  return !!ensureWeaponState().owned[id];
 }
 
 function targetCenter(target, out) {
@@ -106,8 +127,18 @@ export class Combat {
   get reserve() { return this.ammo().reserve; }
   get isEmpty() { return this.mag <= 0; }
 
+  // Mark a weapon as owned (shop purchase, or the combat shot setup).
+  ownWeapon(id) {
+    return ownWeapon(id);
+  }
+
+  owns(id) {
+    return isOwned(id);
+  }
+
   select(id) {
     if (!WEAPONS[id] || id === this.currentId) return false;
+    if (!ensureWeaponState().owned[id]) return false; // not bought yet
     this.cancelReload();
     ensureWeaponState().current = id;
     this.cooldown = Math.max(this.cooldown, 0.15); // brief swap delay
@@ -115,9 +146,13 @@ export class Combat {
   }
 
   cycle(dir = 1) {
-    const i = WEAPON_ORDER.indexOf(this.currentId);
-    const next = WEAPON_ORDER[(i + dir + WEAPON_ORDER.length) % WEAPON_ORDER.length];
-    return this.select(next);
+    // Skip weapons the player has not bought yet; never get stuck on one.
+    for (let step = 1; step <= WEAPON_ORDER.length; step++) {
+      const i = WEAPON_ORDER.indexOf(this.currentId);
+      const next = WEAPON_ORDER[(i + dir * step + WEAPON_ORDER.length) % WEAPON_ORDER.length];
+      if (this.select(next)) return true;
+    }
+    return false;
   }
 
   startReload() {

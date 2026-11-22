@@ -28,10 +28,19 @@ export function createInitialState() {
     // Crew (crew.js, v3): recruited member ids + per-member health.
     // Persisted in the save; meshes are rebuilt by CrewManager.
     crew: { recruited: [], health: {} },
-    // Weapon system (combat.js): current weapon + mag/reserve ammo per tier.
-    // Runtime-only, not saved — a fresh run starts with a full loadout.
+    // Territory (territory.js, v3): owned zone ids + cop downs per zone
+    // toward a free capture + total turf income earned. Persisted.
+    territory: { owned: [], copDowns: { harbor: 0, downtown: 0, suburbs: 0 }, totalEarned: 0 },
+    // Bulletproof vest (shop.js, v3): bought once, -25% damage taken.
+    // Persisted in the save.
+    vest: false,
+    // Weapon system (combat.js): current weapon + mag/reserve ammo per tier
+    // + which weapons are owned (pistol is Rico's; shotgun / rifle are
+    // bought at Solmar Arms). Persisted since v3 — older saves without an
+    // `owned` block keep all three (see applySave).
     weapons: {
       current: 'pistol',
+      owned: { pistol: true, shotgun: false, rifle: false },
       ammo: {
         pistol: { mag: 12, reserve: 48 },
         shotgun: { mag: 6, reserve: 24 },
@@ -84,9 +93,11 @@ export function setWanted(level) {
 }
 
 export function damagePlayer(amount) {
-  // Armor plating (garage.js) absorbs 10% of damage per level, up to 30%.
+  // Armor plating (garage.js) absorbs 10% of damage per level, up to 30%;
+  // a bought bulletproof vest (shop.js) absorbs a further 25%.
   const armor = (state.garage && state.garage.armor) || 0;
-  state.health = Math.max(0, state.health - amount * (1 - 0.10 * armor));
+  const vest = state.vest ? 0.25 : 0;
+  state.health = Math.max(0, state.health - amount * (1 - 0.10 * armor) * (1 - vest));
   if (state.health === 0) state.gameOver = true;
   return state.health;
 }
@@ -149,6 +160,19 @@ export function saveShape() {
       recruited: [...((state.crew && state.crew.recruited) || [])],
       health: { ...((state.crew && state.crew.health) || {}) },
     },
+    // Territory (territory.js, v3): older saves own nothing.
+    territory: {
+      owned: [...((state.territory && state.territory.owned) || [])],
+      copDowns: { harbor: 0, downtown: 0, suburbs: 0, ...((state.territory && state.territory.copDowns) || {}) },
+      totalEarned: (state.territory && state.territory.totalEarned) || 0,
+    },
+    vest: !!state.vest,
+    // Weapons (combat.js / shop.js, v3): current + ammo + ownership.
+    weapons: {
+      current: (state.weapons && state.weapons.current) || 'pistol',
+      owned: { ...((state.weapons && state.weapons.owned) || {}) },
+      ammo: JSON.parse(JSON.stringify((state.weapons && state.weapons.ammo) || {})),
+    },
     distanceDriven: Math.round(state.distanceDriven),
     playSeconds: Math.round(state.playSeconds),
     savedAt: Date.now(),
@@ -199,6 +223,33 @@ export function applySave(data) {
   state.crew = {
     recruited: Array.isArray(data.crew && data.crew.recruited) ? [...data.crew.recruited] : [],
     health: { ...((data.crew && data.crew.health) || {}) },
+  };
+  // Older saves have no territory block; default to nothing owned.
+  state.territory = {
+    owned: Array.isArray(data.territory && data.territory.owned) ? [...data.territory.owned] : [],
+    copDowns: {
+      harbor: 0, downtown: 0, suburbs: 0,
+      ...((data.territory && data.territory.copDowns) || {}),
+    },
+    totalEarned: (data.territory && data.territory.totalEarned) || 0,
+  };
+  // Older saves have no vest; default to unprotected.
+  state.vest = !!data.vest;
+  // Older saves have no weapons block (pre-v3 saves were runtime-only);
+  // those runs keep all three weapons. New saves restore ownership.
+  const savedWeapons = data.weapons || {};
+  const owned = savedWeapons.owned;
+  state.weapons = {
+    current: savedWeapons.current || 'pistol',
+    owned: owned
+      ? { pistol: true, shotgun: false, rifle: false, ...owned }
+      : { pistol: true, shotgun: true, rifle: true },
+    ammo: {
+      pistol: { mag: 12, reserve: 48 },
+      shotgun: { mag: 6, reserve: 24 },
+      rifle: { mag: 30, reserve: 90 },
+      ...(savedWeapons.ammo || {}),
+    },
   };
   return true;
 }

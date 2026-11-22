@@ -136,6 +136,7 @@ export function applyShotSetup(name, ctx) {
     // interceptors close in along open roads while the weapon bar, stars
     // and M7 objective all read in the HUD.
     putPlayerOnFoot(ctx, 64, 64, Math.PI);
+    if (player.combat && player.combat.ownWeapon) player.combat.ownWeapon('rifle');
     if (player.selectWeapon) player.selectWeapon('rifle');
     setWanted(2);
     if (missions) missions.startMission('m7');
