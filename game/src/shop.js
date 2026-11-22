@@ -224,6 +224,7 @@ export class ShopManager {
       'background:rgba(12,18,24,0.96)', 'border:1px solid #ffb020', 'border-radius:10px',
       'color:#eee', 'font-family:inherit', 'padding:16px 18px',
       'box-shadow:0 8px 40px rgba(0,0,0,0.6)', 'display:none',
+      'max-height:86vh', 'overflow-y:auto',
     ].join(';');
     document.body.appendChild(panel);
     panel.addEventListener('click', (e) => {

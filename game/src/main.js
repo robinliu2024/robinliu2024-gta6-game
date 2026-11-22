@@ -204,6 +204,7 @@ function beginPlay() {
   audio.init();
   audio.resume();
   state.started = true;
+  document.getElementById('hud')?.classList.remove('hidden-until-start');
   show(startScreen, false);
   input.requestPointerLock();
 }
@@ -261,9 +262,10 @@ let gameOverShown = false;
 let shotSetup = null;
 if (state.shot) {
   shotSetup = applyShotSetup(state.shot, {
-    player, vehicles, police, missions, camera,
+    player, vehicles, police, missions, camera, crew, territory, shop, safehouses,
     hideStartScreen: () => show(startScreen, false),
     openGarage: () => openGarage(),
+    openShop: () => openShop(),
   });
   if (shotSetup) {
     camYaw = shotSetup.camYaw;

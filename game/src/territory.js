@@ -114,7 +114,7 @@ export class TerritoryManager {
   _refreshRing(id) {
     const ring = this._rings.get(id);
     if (!ring) return;
-    ring.material.color = this.isOwned(id) ? 0xffd23f : 0x8899aa;
+    ring.material.color.set(this.isOwned(id) ? 0xffd23f : 0x8899aa);
     ring.material.opacity = this.isOwned(id) ? 0.4 : 0.22;
   }
 

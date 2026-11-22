@@ -18,6 +18,7 @@ html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: 
 }
 
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+#hud.hidden-until-start { display: none; }
 #hud-top-left { position: absolute; top: 14px; left: 14px; min-width: 170px; }
 #hud-money { font-size: 26px; font-weight: 800; color: #7dff8a; letter-spacing: 0.5px; }
 #hud-debt { font-size: 14px; color: #ff7d7d; font-weight: 700; margin-top: 2px; }

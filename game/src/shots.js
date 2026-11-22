@@ -5,15 +5,16 @@
 // ?shot=mission  on foot near the mission beacon, objective visible
 // ?shot=heli  wanted 4 helicopter chase (cover shot): low tracking camera
 // ?shot=combat  on foot Downtown, rifle out, interceptors closing in
-// ?shot=race  M6 street race, rolling toward checkpoint 1/4
-// ?shot=garage  garage menu open over the live game, HUD visible
+// ?shot=crew  v3 crew in action: Vic + Lena recruited, gunner firing on cops
+// ?shot=territory  v3 turf: Downtown captured, gold ring + HUD turf panel
+// ?shot=shop  v3 shop: Rico at the Downtown Arms kiosk, shop panel open
 // &seed= seeds the RNG, &lq=1 lowers quality. Each setup places the game in
 // a readable, good-looking state with no user input required.
 
 import { DISTRICTS } from './config.js';
 import { state, setWanted } from './state.js';
 
-export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission', 'heli', 'combat', 'race', 'garage'];
+export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission', 'heli', 'combat', 'race', 'garage', 'crew', 'territory', 'shop'];
 
 function putPlayerInCar(ctx, x, z, heading, speed) {
   const { player, vehicles } = ctx;
@@ -71,6 +72,9 @@ export function applyShotSetup(name, ctx) {
   // Every other shot plays the game: hide the start screen, show the HUD.
   state.started = true;
   setup.started = true;
+  if (typeof document !== 'undefined') {
+    document.getElementById('hud')?.classList.remove('hidden-until-start');
+  }
   if (ctx.hideStartScreen) ctx.hideStartScreen();
 
   if (name === 'drive') {
@@ -170,6 +174,95 @@ export function applyShotSetup(name, ctx) {
     setup.camYaw = 0;
     setup.camPitch = 0.3;
     if (missions) missions.startMission('m6');
+    return setup;
+  }
+
+  if (name === 'crew') {
+    // v3 crew in action: Vic (driver) + Lena (gunner) recruited, rifle out,
+    // two stars, M7 running so Lena opens fire on the closing interceptors.
+    // Recruit after placing Rico so the members spawn beside him, then warm
+    // the chase up and freeze the fight at a readable range: parked cars,
+    // the nearest foot cop held ~14 m out so it shoots instead of busting.
+    putPlayerOnFoot(ctx, 64, 64, Math.PI);
+    state.rep = 200;
+    if (ctx.crew) {
+      ctx.crew.tryRecruit('vic');
+      ctx.crew.tryRecruit('lena');
+    }
+    if (player.combat && player.combat.ownWeapon) player.combat.ownWeapon('rifle');
+    if (player.selectWeapon) player.selectWeapon('rifle');
+    setWanted(2);
+    if (missions) missions.startMission('m7');
+    warmUpChase(ctx, 4);
+    // Freeze the fight at a readable range — and stage the threat in frame:
+    // the nearest interceptor is parked ~20 m ahead of Rico (Lena's gunner
+    // fire needs a cop in range), the nearest foot cop held ~14 m out so
+    // it shoots instead of busting. Without this the warmed-up cops end up
+    // behind buildings and the shot reads as three people on an empty road.
+    if (police) {
+      for (const c of police.cops) c.parked = true;
+      for (const fc of police.footCops) fc.speed = 0;
+      const cars = police.cops.filter((c) => !c.down);
+      let best = null;
+      let bestD = Infinity;
+      for (const cop of cars) {
+        const d = Math.hypot(cop.position.x - player.position.x, cop.position.z - player.position.z);
+        if (d < bestD) { bestD = d; best = cop; }
+      }
+      if (best) {
+        const dx = best.position.x - player.position.x;
+        const dz = best.position.z - player.position.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const nx = dx / len;
+        const nz = dz / len;
+        best.position.set(player.position.x + nx * 20, 0, player.position.z + nz * 20);
+        if (best.mesh) best.mesh.position.copy(best.position);
+        const foot = police.footCops[0];
+        if (foot) {
+          foot.position.set(player.position.x + nx * 14, 0, player.position.z + nz * 14);
+          if (foot.mesh) foot.mesh.position.copy(foot.position);
+        }
+        player.heading = Math.atan2(nx, nz);
+        player.mesh.rotation.y = player.heading;
+        setup.camYaw = Math.atan2(-nx, -nz);
+      } else {
+        setup.camYaw = 0;
+      }
+    } else {
+      setup.camYaw = 0;
+    }
+    setup.camPitch = 0.3;
+    return setup;
+  }
+
+  if (name === 'territory') {
+    // v3 turf: Downtown captured — the gold ring on the ground, the HUD
+    // turf panel showing OWNED +$400/day, M10 in the objective bar. The
+    // Downtown ring (centre 40,20 r=150) crosses the x=64 road at z=168,
+    // so Rico's car sits right on the gold line, camera high behind.
+    if (ctx.territory) ctx.territory.capture('downtown');
+    putPlayerInCar(ctx, 64, 168, Math.PI, 0);
+    if (missions) missions.startMission('m10');
+    setup.cameraFn = (cam) => {
+      const p = player.vehicle ? player.vehicle.position : player.position;
+      cam.position.set(p.x - 2, 12, p.z + 26);
+      cam.lookAt(p.x + 2, 1, p.z - 40);
+    };
+    return setup;
+  }
+
+  if (name === 'shop') {
+    // v3 shop: Rico on foot at the Downtown Arms kiosk (64,32), the Solmar
+    // Arms panel open. The world freezes while the shop is open, so the
+    // camera is posed here and stays put (like the garage shot); the kiosk
+    // sits right of the centred panel so it stays visible beside it.
+    putPlayerOnFoot(ctx, 64, 40, Math.PI);
+    if (missions) missions.startMission('m1');
+    if (camera) {
+      camera.position.set(46, 6, 60);
+      camera.lookAt(86, 1.5, 22);
+    }
+    if (ctx.openShop) ctx.openShop();
     return setup;
   }
 

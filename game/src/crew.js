@@ -314,6 +314,7 @@ export class CrewManager {
     this._renderPanel();
     this._panel.style.display = 'block';
     this._panelOpen = true;
+    try { document.exitPointerLock?.(); } catch { /* no pointer lock */ }
     return true;
   }
 
