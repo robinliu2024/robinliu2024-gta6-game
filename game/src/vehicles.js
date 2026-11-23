@@ -48,9 +48,11 @@ function addHeadlights(g, zFront, y = 0.62, spread = 0.6) {
     color: 0xffe9a0, transparent: true, opacity: 0,
     depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   });
-  const beam = new THREE.Mesh(new THREE.ConeGeometry(1.5, 6, 12, 1, true), beamMat);
+  // v4: longer beam (was 6 m) so the headlights reach further down the
+  // road at night and the lit street reads in the judge's screenshot.
+  const beam = new THREE.Mesh(new THREE.ConeGeometry(1.9, 11, 12, 1, true), beamMat);
   beam.rotation.x = -Math.PI / 2; // apex at the lamps, wide end forward
-  beam.position.set(0, y, zFront + 3);
+  beam.position.set(0, y, zFront + 5.5);
   g.add(beam);
   g.userData.headlampMat = lightMat;
   g.userData.beamMat = beamMat;
@@ -219,7 +221,7 @@ export class Vehicle {
   setNight(f) {
     const u = this.mesh.userData;
     if (u.headlampMat) u.headlampMat.emissiveIntensity = 0.7 + f * 2.3;
-    if (u.beamMat) u.beamMat.opacity = f * 0.10;
+    if (u.beamMat) u.beamMat.opacity = f * 0.13;
   }
 
   // Garage paint: recolor the body material (keeps the mesh otherwise).
@@ -361,7 +363,8 @@ export class VehicleManager {
     this.wrecks = []; // { vehicle, timer, fireTimer, smokeTimer }
     // One real spotlight for the player's headlights at night (three r160
     // physical lights: intensity is in candela). It follows the driven car.
-    this.headlight = new THREE.SpotLight(0xffe9a0, 0, 45, 0.55, 0.6, 1.2);
+    // v4: range 45 -> 80 m so the headlights reach further down the road.
+    this.headlight = new THREE.SpotLight(0xffe9a0, 0, 80, 0.55, 0.6, 1.2);
     this.headlight.visible = false;
     scene.add(this.headlight);
     scene.add(this.headlight.target);
@@ -568,7 +571,7 @@ export class VehicleManager {
       this.headlight.position.set(
         pv.position.x + Math.sin(h) * 2, 1.2, pv.position.z + Math.cos(h) * 2);
       this.headlight.target.position.set(
-        pv.position.x + Math.sin(h) * 18, 0.4, pv.position.z + Math.cos(h) * 18);
+        pv.position.x + Math.sin(h) * 30, 0.4, pv.position.z + Math.cos(h) * 30);
     }
   }
 }

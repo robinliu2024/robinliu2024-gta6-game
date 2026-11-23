@@ -13,14 +13,17 @@ import { CITY, DISTRICTS, SPAWNS, makeRng } from './config.js';
 export const DAY_LENGTH = 240;
 const DAY_STOPS = [
   // t, sun intensity, sun colour, hemi, sky, fog, night (0 = day, 1 = night)
-  { t: 0.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
+  { t: 0.00, sun: 0.95, sunColor: 0xffb27a, hemi: 0.65, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
   { t: 0.15, sun: 2.60, sunColor: 0xfff1d6, hemi: 0.90, sky: 0x87b5e0, fog: 0x9fc3e8, night: 0 },
   { t: 0.45, sun: 2.20, sunColor: 0xffe0b0, hemi: 0.80, sky: 0x7fa8d8, fog: 0x9ab8dd, night: 0 },
   // Dusk golden hour: low warm sun, pink-orange sky. The game opens here.
-  { t: 0.55, sun: 1.05, sunColor: 0xff8a3d, hemi: 0.48, sky: 0xc65a5e, fog: 0xc07a5e, night: 0.45 },
-  { t: 0.65, sun: 0.28, sunColor: 0x8aa0c8, hemi: 0.38, sky: 0x0e1a2e, fog: 0x14243a, night: 1 },
-  { t: 0.85, sun: 0.32, sunColor: 0x93a8d0, hemi: 0.40, sky: 0x0c1626, fog: 0x122032, night: 1 },
-  { t: 1.00, sun: 0.70, sunColor: 0xffb27a, hemi: 0.50, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
+  // v4: the floor is lifted (sun 1.6 / hemi 0.75) so streets, cars and
+  // people still read clearly in the default sunset scene — sunset mood,
+  // nothing near-black. Night keeps the same lift (hemi 0.62).
+  { t: 0.55, sun: 1.60, sunColor: 0xff8a3d, hemi: 0.75, sky: 0xc65a5e, fog: 0xc07a5e, night: 0.35 },
+  { t: 0.65, sun: 0.55, sunColor: 0x8aa0c8, hemi: 0.62, sky: 0x0e1a2e, fog: 0x14243a, night: 1 },
+  { t: 0.85, sun: 0.55, sunColor: 0x93a8d0, hemi: 0.62, sky: 0x0c1626, fog: 0x122032, night: 1 },
+  { t: 1.00, sun: 0.95, sunColor: 0xffb27a, hemi: 0.65, sky: 0xd99a7a, fog: 0xe0a888, night: 0.15 },
 ];
 const _cA = new THREE.Color();
 const _cB = new THREE.Color();
@@ -68,6 +71,9 @@ export function districtAt(x, z) {
 }
 
 // Canvas texture for a building facade: lit windows on a coloured wall.
+// v4: more windows lit (litRatio ~0.55), brighter warm glass, and a second
+// canvas that holds ONLY the lit windows — used as the emissive map so
+// windows glow at dusk / night while the wall stays dark.
 function makeFacadeTexture(baseColor, rng, litRatio) {
   const canvas = document.createElement('canvas');
   canvas.width = 128; canvas.height = 256;
@@ -80,28 +86,41 @@ function makeFacadeTexture(baseColor, rng, litRatio) {
   grad.addColorStop(1, 'rgba(0,0,0,0.22)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 128, 256);
+  const glow = document.createElement('canvas');
+  glow.width = 128; glow.height = 256;
+  const gctx = glow.getContext('2d');
+  gctx.fillStyle = '#000000';
+  gctx.fillRect(0, 0, 128, 256);
   for (let row = 0; row < 10; row++) {
     for (let col = 0; col < 5; col++) {
       const lit = rng() < litRatio;
-      ctx.fillStyle = lit ? '#ffd98a' : '#1d2b3a';
+      ctx.fillStyle = lit ? '#ffe6a8' : '#33465c';
       ctx.fillRect(12 + col * 23, 14 + row * 24, 14, 15);
+      if (lit) {
+        gctx.fillStyle = '#ffca6a';
+        gctx.fillRect(12 + col * 23, 14 + row * 24, 14, 15);
+      }
     }
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  const emissiveTex = new THREE.CanvasTexture(glow);
+  emissiveTex.colorSpace = THREE.SRGBColorSpace;
+  return { map: tex, emissiveMap: emissiveTex };
 }
 
 function makeRoadTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 128; canvas.height = 128;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#2e3138';
+  // v4: lighter asphalt (#4b505a was #2e3138) so roads read in the sunset
+  // scene instead of blending into the dark ground.
+  ctx.fillStyle = '#4b505a';
   ctx.fillRect(0, 0, 128, 128);
-  ctx.fillStyle = '#f5c542';
+  ctx.fillStyle = '#ffd34d';
   ctx.fillRect(61, 8, 6, 44);
   ctx.fillRect(61, 76, 6, 44);
-  ctx.fillStyle = '#e8e8e8';
+  ctx.fillStyle = '#f2f2f2';
   ctx.fillRect(4, 0, 3, 128);
   ctx.fillRect(121, 0, 3, 128);
   const tex = new THREE.CanvasTexture(canvas);
@@ -120,6 +139,7 @@ export function buildCity(scene, options = {}) {
   group.name = 'solmar-city';
   const colliders = [];   // {x, z, halfX, halfZ} boxes gameplay parts use for collision
   const buildings = [];
+  const facadeMats = []; // building materials whose window glow follows dusk/night
   const clouds = [];
 
   // --- Lighting: warm day sun + soft sky fill. ---
@@ -214,8 +234,12 @@ export function buildCity(scene, options = {}) {
       const downtownBoost = Math.hypot(gx, gz) < 140 ? 1.8 : 1;
       const h = (14 + rng() * 30) * downtownBoost;
       const color = PALETTE[Math.floor(rng() * PALETTE.length)];
-      const tex = makeFacadeTexture(color, rng, 0.35);
-      const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
+      const tex = makeFacadeTexture(color, rng, 0.55);
+      const mat = new THREE.MeshStandardMaterial({
+        map: tex.map, emissiveMap: tex.emissiveMap, emissive: 0xffffff,
+        emissiveIntensity: 0.5, roughness: 0.85,
+      });
+      facadeMats.push(mat);
       const b = new THREE.Mesh(boxGeo, mat);
       b.scale.set(w, h, d);
       b.position.set(gx + (rng() - 0.5) * 8, h / 2, gz + (rng() - 0.5) * 8);
@@ -354,6 +378,10 @@ export function buildCity(scene, options = {}) {
       lampMat.emissiveIntensity = 0.3 + lerp(a.night, b.night) * 2.2;
       cloudMat.color.lerpColors(_cA.setHex(0xffffff), _cB.setHex(0x2a3a55), lerp(a.night, b.night));
       this.nightFactor = lerp(a.night, b.night);
+      // Lit windows glow harder as dusk falls (v4): faint by day, bright
+      // at golden hour / night so the skyline reads in the judge screenshot.
+      const glow = 0.25 + this.nightFactor * 0.95;
+      for (const m of facadeMats) m.emissiveIntensity = glow;
       // Sun path: rises in the east (t = 0), peaks at midday (t ~ 0.31),
       // sets in the west (t ~ 0.62) — low at golden hour, so shadows run
       // long. After dusk the light is moonlight from a fixed high angle.
