@@ -40,6 +40,16 @@ export function isNearCover(pos, colliders, vehicles) {
   return false;
 }
 
+// Driving fun pack (v4, Builder 3): the two driving keys, read as one
+// object so the drift / nitro system does not reach into input internals.
+// Space is the handbrake (drift), Shift is nitro while driving — on foot
+// Shift stays the sprint key (see Player.update, which returns early in
+// a car, so the two never fight over the same key).
+export function drivingKeys(inp) {
+  if (!inp || !inp.held) return { handbrake: false, nitro: false };
+  return { handbrake: !!inp.held.handbrake, nitro: !!inp.held.sprint };
+}
+
 function clampToCity(v) {
   // v4: the west edge opens onto the docks — Rico can walk out to the pier
   // (x -420) to board a boat; the other three sides stay at +/-320.

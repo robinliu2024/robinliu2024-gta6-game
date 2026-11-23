@@ -298,6 +298,68 @@ export function createHud(deps = {}) {
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   }
 
+  // --- Driving fun pack (v4, Builder 3): drift / air-time score popups
+  // + the nitro meter. One big centre popup for banked scores (DRIFT
+  // +120, AIR TIME +90), reused as the live drift readout while sliding,
+  // and one bar for the nitro meter, shown only while driving. ---
+  let scoreEl = el('hud-score-pop');
+  if (!scoreEl && refs.hud) {
+    scoreEl = document.createElement('div');
+    scoreEl.id = 'hud-score-pop';
+    scoreEl.style.cssText = [
+      'position:absolute', 'left:50%', 'top:34%', 'transform:translateX(-50%)',
+      'font-size:32px', 'font-weight:900', 'color:#ffd23f',
+      'text-shadow:0 2px 10px rgba(0,0,0,0.9)',
+      'display:none', 'white-space:nowrap', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(scoreEl);
+  }
+  let scoreTimer = null;
+  function scorePopup(text, ms = 1800) {
+    if (!scoreEl) return;
+    scoreEl.textContent = text;
+    scoreEl.style.display = 'block';
+    if (scoreTimer) clearTimeout(scoreTimer);
+    scoreTimer = setTimeout(() => { scoreEl.style.display = 'none'; }, ms);
+  }
+  // Live drift readout: same element, refreshed every frame while
+  // sliding; the banked popup replaces it when the drift ends.
+  function showDrift(points) {
+    if (!scoreEl) return;
+    if (scoreTimer) { clearTimeout(scoreTimer); scoreTimer = null; }
+    scoreEl.textContent = `DRIFT +${points}`;
+    scoreEl.style.display = 'block';
+  }
+  function hideDrift() {
+    if (!scoreEl) return;
+    if (scoreTimer) { clearTimeout(scoreTimer); scoreTimer = null; }
+    scoreEl.style.display = 'none';
+  }
+  // Nitro meter: bar + label, only while driving.
+  let nitroEl = el('hud-nitro');
+  if (!nitroEl && refs.hud) {
+    nitroEl = document.createElement('div');
+    nitroEl.id = 'hud-nitro';
+    nitroEl.style.cssText = [
+      'position:absolute', 'right:18px', 'bottom:182px', 'width:170px',
+      'display:none', 'pointer-events:none', 'font-family:inherit',
+    ].join(';');
+    nitroEl.innerHTML = '<div style="font-size:11px;font-weight:800;color:#ffd23f;text-shadow:0 1px 4px rgba(0,0,0,0.9);text-align:right;margin-bottom:3px;">NITRO · SHIFT</div><div style="height:10px;border-radius:5px;background:rgba(0,0,0,0.6);overflow:hidden;"><div id="hud-nitro-fill" style="height:100%;width:100%;background:linear-gradient(90deg,#ff7a2a,#ffd23f);"></div></div>';
+    refs.hud.appendChild(nitroEl);
+  }
+  const nitroFill = nitroEl ? nitroEl.querySelector('#hud-nitro-fill') : null;
+  function setNitro(frac, active) {
+    if (!nitroEl) return;
+    const player = getPlayer();
+    const driving = !!player && !player.onFoot && !!player.vehicle;
+    nitroEl.style.display = driving ? 'block' : 'none';
+    if (!driving || !nitroFill) return;
+    nitroFill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+    nitroFill.style.background = active
+      ? 'linear-gradient(90deg,#ff3d00,#ffb03a)'
+      : 'linear-gradient(90deg,#ff7a2a,#ffd23f)';
+  }
+
   // Cover badge (v3, Builder 4): shows while Rico is crouched behind
   // cover — the spread / damage bonuses only apply in that state.
   let coverEl = el('hud-cover');
@@ -318,7 +380,7 @@ export function createHud(deps = {}) {
   // C is the radio in a car and the crouch key on foot (v3 cover).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse';
+    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse · Space handbrake drift · Shift nitro';
   }
 
   let lastObjective = '';
@@ -482,7 +544,7 @@ export function createHud(deps = {}) {
     drawMinimap();
   }
 
-  return { update, drawMinimap, refs, toast };
+  return { update, drawMinimap, refs, toast, scorePopup, showDrift, hideDrift, setNitro };
 }
 
 export default createHud;

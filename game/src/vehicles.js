@@ -9,6 +9,7 @@ import { damageTarget } from './combat.js';
 import { speedMultiplier, accelMultiplier, applyPaintTo } from './garage.js';
 import { roadLines, nearestRoadPoint, BOAT_SPAWNS, BOAT_BOUNDS } from './city.js';
 import { collideCircle } from './player.js';
+import { checkRampLaunch, NITRO_TOP_SPEED_MULT, NITRO_ACCEL_MULT, RAMP_MIN_SPEED } from './drift.js';
 
 const MS_TO_MPH = 2.23694;
 const CAR_COLORS = [0xc23b2e, 0x2e6fc2, 0xe8b93c, 0x3aa655, 0x8a5fc2, 0xd8d8d8, 0x222831, 0xe07a3a];
@@ -185,6 +186,24 @@ export class Vehicle {
     this.onDestroyed = null; // fn(vehicle) — set by VehicleManager
     this.aimHeight = 1.0;    // combat ray-test centre height
     this.radius = this.stats.radius; // combat ray-test sphere radius
+    // v4 driving fun pack (Builder 3): drift / nitro / stunt-jump state.
+    // All of it starts neutral, so a car that never drifts, boosts or
+    // jumps drives exactly like before — the new code only runs while one
+    // of them is active.
+    this.slideVel = 0;      // lateral slide speed (m/s) while drifting
+    this.drifting = false;  // handbrake + speed + steering this frame
+    this.driftYaw = 0;      // visual tail-out angle (radians, display only)
+    this.airY = 0;          // height above the road while airborne
+    this.vy = 0;            // vertical speed while airborne
+    this.airborne = false;
+    this.airTime = 0;       // seconds spent in the current jump
+    this.lastAirTime = 0;   // seconds spent in the last finished jump
+    this.landings = 0;      // count of finished jumps (drivingFun reads this)
+    this.justLanded = false;
+    this.nitroActive = false; // set by drivingFun (the meter lives there)
+    this.ramps = null;      // stunt ramps, set by VehicleManager.setRamps
+    this._rampCooldown = 0;
+    this.mesh.rotation.order = 'YXZ'; // yaw + air pitch without roll coupling
   }
 
   get speedMph() { return Math.abs(this.speed) * MS_TO_MPH; }
@@ -275,11 +294,35 @@ export class Vehicle {
     const tuned = this.driver === 'player';
     const accelMul = tuned ? accelMultiplier() : 1;
     const topMul = tuned ? speedMultiplier() : 1;
+    // Nitro (v4): while the boost is on, the car pulls harder and its top
+    // speed rises. nitroActive is set by drivingFun (the meter lives
+    // there); off means exactly the old numbers below.
+    const nitroTop = this.nitroActive ? NITRO_TOP_SPEED_MULT : 1;
+    const nitroAccel = this.nitroActive ? NITRO_ACCEL_MULT : 1;
+    // Stunt ramps (v4): crossing a ramp lip at speed launches the car.
+    // Airborne time is tracked for the air-time bonus in drivingFun.
+    this._rampCooldown = Math.max(0, this._rampCooldown - dt);
+    if (!this.airborne && this.ramps && this._rampCooldown <= 0 && this.speed > RAMP_MIN_SPEED) {
+      const ramp = checkRampLaunch(this.ramps, this.position.x, this.position.z, this.heading, this.speed);
+      if (ramp) {
+        // Start the flight at the slope height under the car, so the
+        // launch reads as leaving the ramp instead of popping up off the
+        // flat road (the trigger can fire anywhere along the 9 m slope).
+        const rdx = this.position.x - ramp.x;
+        const rdz = this.position.z - ramp.z;
+        const along = rdx * ramp.sinH + rdz * ramp.cosH;
+        this.airborne = true;
+        this.airY = Math.max(0.4, 0.3 + (along + 4.5) * 0.28);
+        this.vy = 7 + this.speed * 0.16;
+        this.airTime = 0;
+        this._rampCooldown = 1.5;
+      }
+    }
     // Shredded tires (spike strips): less grip, less top speed, and the
     // car bleeds speed even at full throttle.
     const tire = this.tireDamage || 0;
     const tireTopMul = 1 - 0.5 * tire;
-    const accel = axes.y > 0 ? st.accel * accelMul * (1 - 0.3 * tire) : 0;
+    const accel = axes.y > 0 ? st.accel * accelMul * (1 - 0.3 * tire) * nitroAccel : 0;
     const braking = axes.y < 0;
     if (accel) this.speed += accel * dt;
     if (braking) {
@@ -287,10 +330,14 @@ export class Vehicle {
       else this.speed -= st.accel * accelMul * 0.45 * dt; // reverse
     }
     if (!accel && !braking) this.speed *= Math.max(0, 1 - 0.9 * dt); // coast drag
-    if (handbrake) this.speed *= Math.max(0, 1 - 2.2 * dt);
-    if (tire > 0) this.speed *= Math.max(0, 1 - 0.25 * tire * dt);
-    this.speed = Math.max(-12, Math.min(st.maxSpeed * topMul * tireTopMul, this.speed));
+    // Drift (v4): handbrake + forward speed + steering = a real slide.
+    // Decided here, before the handbrake decay, so a drift can hold its
+    // speed instead of scrubbing it off at the old handbrake rate.
     const steerInput = axes.x;
+    const wantDrift = handbrake && this.speed > 8 && steerInput !== 0 && !this.airborne;
+    if (handbrake) this.speed *= Math.max(0, 1 - (wantDrift ? 1.0 : 2.2) * dt);
+    if (tire > 0) this.speed *= Math.max(0, 1 - 0.25 * tire * dt);
+    this.speed = Math.max(-12, Math.min(st.maxSpeed * topMul * tireTopMul * nitroTop, this.speed));
     const steerTarget = steerInput * st.turn * (handbrake ? 1.5 : 1);
     this.steer += (steerTarget - this.steer) * Math.min(1, dt * 8);
     const turnRate = this.steer * Math.min(1, Math.abs(this.speed) / 8) * Math.sign(this.speed || 1);
@@ -299,17 +346,59 @@ export class Vehicle {
     const fz = Math.cos(this.heading);
     this.position.x += fx * this.speed * dt;
     this.position.z += fz * this.speed * dt;
+    // Drift slide: the slide velocity is an extra lateral velocity on top
+    // of the normal forward motion. It chases a target set by speed and
+    // steering while drifting, and bleeds off fast once the handbrake is
+    // released — at zero it changes nothing about how the car drives.
+    if (wantDrift) {
+      this.drifting = true;
+      const target = Math.sign(steerInput) * Math.abs(this.speed) * 0.38;
+      this.slideVel += (target - this.slideVel) * Math.min(1, dt * 3.5);
+    } else {
+      this.drifting = false;
+      this.slideVel *= Math.max(0, 1 - dt * 5);
+      if (Math.abs(this.slideVel) < 0.05) this.slideVel = 0;
+    }
+    const rx = Math.cos(this.heading);
+    const rz = -Math.sin(this.heading);
+    this.position.x += rx * this.slideVel * dt;
+    this.position.z += rz * this.slideVel * dt;
+    // Visual tail-out: the nose points further into the turn than the
+    // direction of travel while sliding. Display only — no physics.
+    this.driftYaw = Math.max(-0.22, Math.min(0.22,
+      (this.slideVel / Math.max(8, Math.abs(this.speed))) * 0.55));
+    // Airborne: gravity pulls the car back down; the road cannot touch it
+    // mid-flight, so building collision is skipped until touchdown.
+    if (this.airborne) {
+      this.vy -= 22 * dt;
+      this.airY += this.vy * dt;
+      this.airTime += dt;
+      if (this.airY <= 0) {
+        this.airY = 0;
+        this.vy = 0;
+        this.airborne = false;
+        this.lastAirTime = this.airTime;
+        this.airTime = 0;
+        this.landings += 1;
+        this.justLanded = true;
+        this.speed *= 0.92; // landing scrubs a little speed
+      }
+    }
+    this.position.y = this.airY;
     this.position.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.x));
     this.position.z = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, this.position.z));
     const bx = this.position.x;
     const bz = this.position.z;
-    collideCircle(this.position, st.radius, colliders);
+    if (!this.airborne) collideCircle(this.position, st.radius, colliders);
     const push = Math.hypot(this.position.x - bx, this.position.z - bz);
     if (push > 0.05 && Math.abs(this.speed) > 1) {
       // A real scrape: fragile rides bleed speed, tough ones shrug it off.
       this.speed *= Math.max(0.4, 1 - 0.06 / st.tough);
     }
-    this.mesh.rotation.y = this.heading;
+    // Air pitch: nose up while climbing, nose down while falling. YXZ
+    // order (set in the constructor) keeps the pitch in the car's frame.
+    const airPitch = this.airborne ? (this.vy > 0 ? -0.22 : 0.12) : 0;
+    this.mesh.rotation.set(airPitch, this.heading + this.driftYaw, 0);
     state.speedMph = this.speedMph;
     state.distanceDriven += Math.abs(this.speed) * dt;
   }
@@ -376,8 +465,16 @@ export class VehicleManager {
   // whose health hits zero explodes through explodeVehicle below.
   _addVehicle(v) {
     v.onDestroyed = (veh) => this.explodeVehicle(veh);
+    if (this.ramps) v.ramps = this.ramps; // stunt ramps (v4), if already set
     this.vehicles.push(v);
     return v;
+  }
+
+  // Stunt ramps (v4): hand the ramp list to every vehicle (drivingFun
+  // builds them); a car crossing a ramp lip goes airborne in drive().
+  setRamps(ramps) {
+    this.ramps = ramps || null;
+    for (const v of this.vehicles) v.ramps = this.ramps;
   }
 
   // Blow a car up: fireball + smoke + shockwave, charred wreck left
@@ -540,6 +637,12 @@ export class VehicleManager {
       if (v.wrecked) continue; // wrecks do not drive
       if (v.driver === 'player') v.drive(dt, inp, this.colliders);
       else if (v.traffic) v.updateTraffic(dt, this.colliders);
+      // v4: a jump landing thumps the camera (drivingFun scores the air
+      // time off the landings counter — this flag is only for the shake).
+      if (v.justLanded) {
+        v.justLanded = false;
+        if (this.effects && v.lastAirTime > 0.4) this.effects.shake(0.25);
+      }
     }
     // Burning wrecks: keep puffing fire + smoke, then clear the wreck
     // off the street after WRECK_DURATION seconds.

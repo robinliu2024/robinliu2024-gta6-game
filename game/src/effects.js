@@ -179,6 +179,47 @@ export class Effects {
     }
   }
 
+  // --- Driving fun pack (v4, Builder 3): drift smoke + nitro flames. ---
+  // Drift smoke: short-lived puffs at the rear wheels while sliding.
+  // Same smoke pool as the wreck smoke, but denser and shorter-lived so
+  // a drift reads as a fresh white cloud, not a burning wreck.
+  spawnDriftSmoke(pos) {
+    const count = this.lowQuality ? 3 : 4;
+    for (let i = 0; i < count; i++) {
+      if (this._smokeCount >= MAX_PARTICLES) return;
+      const idx = this._smokeCount++;
+      this._smokePositions[idx * 3] = pos.x + (Math.random() - 0.5) * 0.5;
+      this._smokePositions[idx * 3 + 1] = pos.y + Math.random() * 0.3;
+      this._smokePositions[idx * 3 + 2] = pos.z + (Math.random() - 0.5) * 0.5;
+      this._smokeVel[idx * 3] = (Math.random() - 0.5) * 1.2;
+      this._smokeVel[idx * 3 + 1] = 0.9 + Math.random() * 1.0;
+      this._smokeVel[idx * 3 + 2] = (Math.random() - 0.5) * 1.2;
+      this._smokeLife[idx] = 0.9 + Math.random() * 0.7;
+    }
+  }
+
+  // Nitro flames: a short jet of fire streaming backwards from the
+  // exhaust. Writes straight into the fire pool with a rearward velocity
+  // (unlike _spawnBurst, which scatters in a disc).
+  spawnNitroFlame(pos, heading) {
+    const count = this.lowQuality ? 3 : 5;
+    const bx = -Math.sin(heading);
+    const bz = -Math.cos(heading);
+    for (let i = 0; i < count; i++) {
+      if (this._count >= MAX_PARTICLES) return;
+      const idx = this._count++;
+      this._positions[idx * 3] = pos.x + (Math.random() - 0.5) * 0.3;
+      this._positions[idx * 3 + 1] = pos.y + (Math.random() - 0.5) * 0.2;
+      this._positions[idx * 3 + 2] = pos.z + (Math.random() - 0.5) * 0.3;
+      const sp = 7 + Math.random() * 5;
+      this._vel[idx * 3] = bx * sp + (Math.random() - 0.5) * 1.5;
+      this._vel[idx * 3 + 1] = 0.5 + Math.random() * 1.5;
+      this._vel[idx * 3 + 2] = bz * sp + (Math.random() - 0.5) * 1.5;
+      this._life[idx] = 0.22 + Math.random() * 0.18;
+    }
+    this._points.material.color.setHex(0xffb03a);
+  }
+
   // Expanding shockwave ring for a vehicle explosion: grows to ~12 m and
   // fades in ~0.6 s.
   spawnShockwave(pos) {

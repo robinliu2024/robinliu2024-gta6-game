@@ -16,6 +16,7 @@ import { MissionRunner, DockDelivery, DOCK_RUN_REWARD, DOCK_RUN_REP } from './mi
 import { audio } from './audio.js';
 import { createHud } from './hud.js';
 import { Effects } from './effects.js';
+import { DrivingFun } from './drift.js';
 import { createSaveManager } from './save.js';
 import { createGarageUI, applyPaintTo, RACE_WIN_BONUS_REP, NEAR_MISS_REP } from './garage.js';
 import { CrewManager } from './crew.js';
@@ -180,6 +181,17 @@ const hud = createHud({
 function updateHud() {
   hud.update(0, elapsed);
 }
+
+// v4 driving fun pack (Builder 3): drift scoring, nitro boost, stunt
+// ramps + air-time bonuses. Owns the camera FOV stretch while boosting.
+const drivingFun = new DrivingFun(scene, {
+  getPlayer: () => player,
+  getVehicles: () => vehicles,
+  effects,
+  hud,
+  camera,
+  input,
+});
 
 // --- Garage (v2): G opens the panel; the world freezes while it is open
 // (but the HUD keeps updating). Esc closes the garage before pausing.
@@ -436,6 +448,11 @@ function animate() {
       vehicles.update(delta, input, player);
       boats.update(delta, input, player, elapsed);
       dockRun.update(delta);
+      // v4: drift / nitro / jump scoring runs after the drive step so it
+      // reads this frame's drift + airborne state. Skipped while a shot
+      // owns the camera (heli / territory), so the FOV stretch never
+      // fights the shot framing.
+      if (!(shotSetup && shotSetup.cameraFn)) drivingFun.update(delta);
       // v2: near-miss driving — pass a traffic car close at speed for +REP.
       if (player.vehicle && player.vehicle.speedMph > 25 && elapsed - lastNearMissAt > 5) {
         for (const v of vehicles.vehicles) {
@@ -509,6 +526,7 @@ window.__game = {
   vehicles,
   boats,
   dockRun,
+  drivingFun,
   pedestrians,
   police,
   missions,
