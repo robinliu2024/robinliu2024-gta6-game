@@ -14,13 +14,13 @@ Rico Vega owes Marla Voss $40,000. Run **twelve story missions** across Solmar B
 - **Territory** — take over three districts (Downtown, Harbor, Marina); holding ground pays out and marks the map as yours.
 - **Weapons** — four tiers: pistol, shotgun, rifle and SMG (keys 1/2/3/4, R to reload), with attachments fitted from the shop.
 - **Shops & safehouses** — Solmar Arms sells weapons, ammo and attachments (B near a shop); safehouses save the game (E) and fast-travel between districts (T).
-- **Police** — a wanted system up to 5 stars, a police helicopter at high heat, roadblocks on the streets, and at the top end SWAT teams, spike strips and PIT maneuvers.
+- **Police** — 5-star SBPD dispatch: interceptors, a police helicopter at high heat, roadblocks on the streets, and at the top end SWAT vans, spike strips and PIT maneuvers.
 - **Cover shootouts** — crouch (C on foot) behind cover to steady your aim and take less damage; cars can explode when shot up.
-- **Garage** — spend mission money on top speed, acceleration, armor and paint (G); REP tiers unlock discounts and special paints.
+- **Garage** — spend mission money on top speed, acceleration, armor and paint (G); respect ranks (REP tiers: Nobody, Hustler, Street King, Legend) unlock discounts and special paints.
 - **Radio** — synthesized stations while you drive (C in a car).
 - **Golden hour & rain** — the city runs from morning through a golden-hour dusk to night, with light rain showers; street lamps and car headlights switch on after dark.
 - **Saves** — progress, money, REP, crew and territory are saved at safehouses and can be continued later.
-- **More rides** — steal motorcycles, sports cars and vans as well as sedans, each with its own speed and handling.
+- **Carjacking** — steal motorcycles, sports cars and vans as well as sedans, each with its own speed and handling.
 
 ## Run it
 
