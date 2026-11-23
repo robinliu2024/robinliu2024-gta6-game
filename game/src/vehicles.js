@@ -7,7 +7,7 @@ import { CITY, TUNING, makeRng } from './config.js';
 import { state, setWanted, damagePlayer } from './state.js';
 import { damageTarget } from './combat.js';
 import { speedMultiplier, accelMultiplier, applyPaintTo } from './garage.js';
-import { roadLines, nearestRoadPoint } from './city.js';
+import { roadLines, nearestRoadPoint, BOAT_SPAWNS, BOAT_BOUNDS } from './city.js';
 import { collideCircle } from './player.js';
 
 const MS_TO_MPH = 2.23694;
@@ -572,6 +572,176 @@ export class VehicleManager {
         pv.position.x + Math.sin(h) * 2, 1.2, pv.position.z + Math.cos(h) * 2);
       this.headlight.target.position.set(
         pv.position.x + Math.sin(h) * 30, 0.4, pv.position.z + Math.cos(h) * 30);
+    }
+  }
+}
+
+// --- Boats (v4) -----------------------------------------------------------
+// Independent code path: boats never touch Vehicle or car physics. Board
+// with E at the docks; W/S throttle, A/D steer, same feel as driving but
+// on water — heavier drag, wider turns, simple bobbing (no wave sim).
+// If this breaks, the whole boat item is cut, not patched into car code.
+export const BOAT_STATS = { maxSpeed: 30, accel: 14, brake: 20, turn: 1.6, radius: 2.2 };
+const BOAT_COLORS = [0xe8e8e8, 0x2e6fc2, 0xc23b2e];
+
+function buildBoatMesh(color) {
+  const g = new THREE.Group();
+  g.name = 'solmar-boat';
+  const hullMat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.3 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.8 });
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 5.6), hullMat);
+  hull.position.y = 0.4;
+  hull.castShadow = true;
+  g.add(hull);
+  // Bow wedge: a flattened cone pointing forward so the hull reads as a boat.
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.6, 4), hullMat);
+  bow.rotation.x = Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.scale.set(1, 1, 0.5);
+  bow.position.set(0, 0.4, 3.4);
+  bow.castShadow = true;
+  g.add(bow);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.18, 4.6), darkMat);
+  deck.position.y = 0.86;
+  g.add(deck);
+  const cabin = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 0.9, 1.8),
+    new THREE.MeshStandardMaterial({ color: 0x18242e, roughness: 0.15, metalness: 0.6 }),
+  );
+  cabin.position.set(0, 1.35, -0.6);
+  cabin.castShadow = true;
+  g.add(cabin);
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.35, 0.6), darkMat);
+  bench.position.set(0, 1.05, 1.6);
+  g.add(bench);
+  // Outboard motor at the stern.
+  const motor = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.5), darkMat);
+  motor.position.set(0, 0.45, -3.0);
+  g.add(motor);
+  // Navigation light: brightens at night (see Boat.setNight).
+  const navMat = new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0xff3b30, emissiveIntensity: 0.6 });
+  const nav = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), navMat);
+  nav.position.set(0, 1.95, -0.6);
+  g.add(nav);
+  g.userData.navMat = navMat;
+  return g;
+}
+
+export class Boat {
+  constructor(scene, opts = {}) {
+    this.isBoat = true;   // the flag the game loop + missions use to tell a boat from a car
+    this.kind = 'boat';
+    this.stats = BOAT_STATS;
+    this.mesh = buildBoatMesh(opts.color ?? 0xe8e8e8);
+    this.mesh.position.set(opts.x || 0, 0, opts.z || 0);
+    this.mesh.rotation.y = opts.heading || 0;
+    scene.add(this.mesh);
+    this.scene = scene;
+    this.position = this.mesh.position;
+    this.heading = opts.heading || 0;
+    this.speed = 0;              // m/s, signed (reverse is negative)
+    this.driver = null;          // 'player' | null (no boat traffic)
+    this.id = opts.id || `boat-${Math.random().toString(36).slice(2, 8)}`;
+    this.radius = BOAT_STATS.radius;
+    this._bobPhase = Math.random() * Math.PI * 2;
+  }
+
+  get speedMph() { return Math.abs(this.speed) * MS_TO_MPH; }
+
+  setNight(f) {
+    const u = this.mesh.userData;
+    if (u.navMat) u.navMat.emissiveIntensity = 0.6 + f * 2.4;
+  }
+
+  board(player) {
+    this.driver = 'player';
+    player.onFoot = false;
+    player.vehicle = this;
+    player.mesh.visible = false;
+  }
+
+  disembark(player) {
+    this.driver = null;
+    player.onFoot = true;
+    player.vehicle = null;
+    player.mesh.visible = true;
+    // Step out to the driver's side, same as a car exit.
+    const side = new THREE.Vector3(Math.cos(this.heading), 0, -Math.sin(this.heading));
+    player.position.copy(this.position).add(side.multiplyScalar(2.2));
+    player.position.y = 0;
+    player.heading = this.heading;
+    player.mesh.rotation.y = this.heading;
+  }
+
+  // Water driving: throttle / brake / reverse from the same input axes as
+  // cars, heavier coast drag, steering that only bites with speed, and a
+  // hard clamp to the bay so a boat can never beach itself onto the city.
+  drive(dt, inp, time = 0) {
+    const axes = inp.axes();
+    if (axes.y > 0) this.speed += BOAT_STATS.accel * dt;
+    else if (axes.y < 0) {
+      if (this.speed > 0.5) this.speed -= BOAT_STATS.brake * dt;
+      else this.speed -= BOAT_STATS.accel * 0.4 * dt; // reverse
+    } else {
+      this.speed *= Math.max(0, 1 - 0.55 * dt); // water drag
+    }
+    this.speed = Math.max(-8, Math.min(BOAT_STATS.maxSpeed, this.speed));
+    const steer = axes.x * BOAT_STATS.turn;
+    this.heading += steer * Math.min(1, Math.abs(this.speed) / 6) * Math.sign(this.speed || 1) * dt;
+    this.position.x += Math.sin(this.heading) * this.speed * dt;
+    this.position.z += Math.cos(this.heading) * this.speed * dt;
+    const cx = Math.max(BOAT_BOUNDS.minX, Math.min(BOAT_BOUNDS.maxX, this.position.x));
+    const cz = Math.max(BOAT_BOUNDS.minZ, Math.min(BOAT_BOUNDS.maxZ, this.position.z));
+    if (cx !== this.position.x || cz !== this.position.z) this.speed *= 0.5; // shore scrape
+    this.position.x = cx;
+    this.position.z = cz;
+    // Simple buoyancy: gentle bob + roll, no wave simulation.
+    this.mesh.position.y = 0.12 + Math.sin(time * 1.3 + this._bobPhase) * 0.12;
+    this.mesh.rotation.y = this.heading;
+    this.mesh.rotation.z = Math.sin(time * 0.9 + this._bobPhase) * 0.03;
+    this.mesh.rotation.x = Math.max(-0.05, Math.min(0.05, -axes.y * 0.02));
+    state.speedMph = this.speedMph;
+    state.distanceDriven += Math.abs(this.speed) * dt;
+  }
+}
+
+export class BoatManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.boats = [];
+    this.nightFactor = 0;
+    BOAT_SPAWNS.forEach((s, i) => {
+      this.boats.push(new Boat(scene, {
+        x: s.x, z: s.z, heading: s.heading,
+        color: BOAT_COLORS[i % BOAT_COLORS.length], id: `boat-${i}`,
+      }));
+    });
+  }
+
+  nearestTo(pos, maxDist = 5) {
+    let best = null;
+    let bestD = maxDist;
+    for (const b of this.boats) {
+      const d = Math.hypot(b.position.x - pos.x, b.position.z - pos.z);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  setNight(f) {
+    if (Math.abs(f - this.nightFactor) < 0.005) return;
+    this.nightFactor = f;
+    for (const b of this.boats) b.setNight(f);
+  }
+
+  update(dt, inp, player, time = 0) {
+    for (const b of this.boats) {
+      if (b.driver === 'player') b.drive(dt, inp, time);
+      else {
+        // Moored boats still bob at the dock.
+        b.mesh.position.y = 0.12 + Math.sin(time * 1.3 + b._bobPhase) * 0.12;
+        b.mesh.rotation.z = Math.sin(time * 0.9 + b._bobPhase) * 0.03;
+      }
     }
   }
 }

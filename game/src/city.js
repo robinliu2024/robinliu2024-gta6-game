@@ -41,6 +41,21 @@ function dayNightStopsAt(time) {
   return { a, b, f };
 }
 
+// --- Docks (v4): boats + dock delivery. The bay west of the beach is
+// drivable water; boats moor at the boardwalk pier and the Harbor dock.
+// BOAT_SPAWNS are the moored boat positions, DOCK_RUN_START is the crate
+// where a dock run is picked up (on the beach, just north of the pier
+// root), DOCK_RUN_TARGET is the delivery buoy out in the bay.
+export const BOAT_SPAWNS = [
+  { x: -382, z: -28, heading: -Math.PI / 2 },
+  { x: -400, z: -52, heading: -Math.PI / 2 },
+  { x: -382, z: 166, heading: -Math.PI / 2 },
+];
+export const DOCK_RUN_START = { x: -322, z: -28 };
+export const DOCK_RUN_TARGET = { x: -520, z: 120 };
+// Boats stay in the bay: west of the beach, east of the open sea.
+export const BOAT_BOUNDS = { minX: -600, maxX: -352, minZ: -310, maxZ: 310 };
+
 export function roadLines() {
   const lines = [];
   for (let c = -CITY.halfSize; c <= CITY.halfSize; c += CITY.blockSize) {
@@ -334,6 +349,63 @@ export function buildCity(scene, options = {}) {
   pier.position.set(-CITY.halfSize - 50, 0.8, DISTRICTS.boardwalk.z);
   pier.castShadow = true; pier.receiveShadow = true;
   group.add(pier);
+
+  // --- Docks (v4): Harbor dock, mooring posts, delivery buoys, run crate.
+  // The Harbor dock is a second wooden platform off the beach at z = 178,
+  // so a boat is visible from the Harbor spawn. Buoys mark the delivery
+  // lane out to the target buoy; the crate stack marks the run pickup.
+  const dockMat = new THREE.MeshStandardMaterial({ color: 0x8a6a44, roughness: 1 });
+  const harborDock = new THREE.Mesh(new THREE.BoxGeometry(60, 1.2, 8), dockMat);
+  harborDock.position.set(-CITY.halfSize - 52, 0.8, 178);
+  harborDock.castShadow = true; harborDock.receiveShadow = true;
+  group.add(harborDock);
+  const postGeo = new THREE.CylinderGeometry(0.35, 0.35, 2.4, 8);
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x5c4630, roughness: 1 });
+  for (const s of BOAT_SPAWNS) {
+    // A mooring post just off each boat's bow.
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(s.x + Math.sin(s.heading) * 4, 0.4, s.z + Math.cos(s.heading) * 4);
+    group.add(post);
+  }
+  for (const [x, z] of [[-380, 180], [-384, 176]]) {
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.set(x, 0.4, z);
+    group.add(post);
+  }
+  // Delivery lane buoys: small orange floats from the pier toward the
+  // target buoy, which is bigger and carries a pole so it reads at range.
+  const buoyMat = new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.6 });
+  const laneBuoys = [[-420, 0], [-455, 40], [-490, 80]];
+  for (const [x, z] of laneBuoys) {
+    const buoy = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), buoyMat);
+    buoy.position.set(x, 0.1, z);
+    group.add(buoy);
+  }
+  const targetBuoy = new THREE.Mesh(new THREE.SphereGeometry(1.8, 12, 10), buoyMat);
+  targetBuoy.position.set(DOCK_RUN_TARGET.x, 0.2, DOCK_RUN_TARGET.z);
+  group.add(targetBuoy);
+  const targetPole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, 4, 6),
+    new THREE.MeshStandardMaterial({ color: 0xffe9a0, emissive: 0xffe9a0, emissiveIntensity: 0.8 }),
+  );
+  targetPole.position.set(DOCK_RUN_TARGET.x, 2.2, DOCK_RUN_TARGET.z);
+  group.add(targetPole);
+  // Run pickup: a crate stack + a cyan ring on the beach by the pier root.
+  const crateMat = new THREE.MeshStandardMaterial({ color: 0xb08a4a, roughness: 1 });
+  const crateGeo = new THREE.BoxGeometry(1.4, 1.4, 1.4);
+  for (const [dx, dz, dy] of [[0, 0, 0.7], [1.5, 0.4, 0.7], [0.7, -0.6, 2.1]]) {
+    const crate = new THREE.Mesh(crateGeo, crateMat);
+    crate.position.set(DOCK_RUN_START.x + dx, dy, DOCK_RUN_START.z + dz);
+    crate.castShadow = true;
+    group.add(crate);
+  }
+  const runRing = new THREE.Mesh(
+    new THREE.RingGeometry(3.4, 4.4, 32),
+    new THREE.MeshBasicMaterial({ color: 0x35d0ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
+  );
+  runRing.rotation.x = -Math.PI / 2;
+  runRing.position.set(DOCK_RUN_START.x + 0.7, 0.12, DOCK_RUN_START.z);
+  group.add(runRing);
 
   // --- Day/night controller: lerps the lights / sky / fog between the
   // keyframes above, and switches the street lamps + clouds with it.

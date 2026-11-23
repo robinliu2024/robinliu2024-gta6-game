@@ -9,10 +9,10 @@ import { state, currentObjective, applySave, loadSave, saveGame, addRep } from '
 import { buildCity, updateCity, spawnPoint, districtAt } from './city.js';
 import { input } from './input.js';
 import { Player } from './player.js';
-import { VehicleManager } from './vehicles.js';
+import { VehicleManager, BoatManager } from './vehicles.js';
 import { PedestrianManager } from './pedestrians.js';
 import { PoliceManager } from './police.js';
-import { MissionRunner } from './missions.js';
+import { MissionRunner, DockDelivery, DOCK_RUN_REWARD, DOCK_RUN_REP } from './missions.js';
 import { audio } from './audio.js';
 import { createHud } from './hud.js';
 import { Effects } from './effects.js';
@@ -71,6 +71,20 @@ const world = { player, vehicles, police, audio };
 const missions = new MissionRunner(scene, world);
 world.missions = missions;
 
+// v4: boats + dock delivery — the bay is drivable water now. Boats live in
+// their own manager (no car code involved) and the dock run is a repeatable
+// timed side job, separate from the twelve story missions.
+const boats = new BoatManager(scene);
+world.boats = boats;
+const dockRun = new DockDelivery(scene, world);
+world.dockRun = dockRun;
+dockRun.onComplete = () => {
+  audio.sting();
+  saveGame();
+  hud.toast(`Dock run complete — +$${DOCK_RUN_REWARD} · +${DOCK_RUN_REP} REP`, 3500);
+};
+dockRun.onFail = () => { audio.fail(); };
+
 // v3: crew system — recruits follow Rico, the gunner fights in missions,
 // the driver softens police pressure (see police.crewModifiers below).
 const crew = new CrewManager(scene, world);
@@ -128,6 +142,10 @@ const saveManager = createSaveManager({ getMissions: () => missions });
 let dialogueText = '';
 let dialogueAt = -99;
 missions.onDialogue = (line) => {
+  dialogueText = line;
+  dialogueAt = elapsed;
+};
+dockRun.onDialogue = (line) => {
   dialogueText = line;
   dialogueAt = elapsed;
 };
@@ -299,6 +317,7 @@ function animate() {
     // v2: day/night cycle drives the vehicles' headlights (lamps, beams,
     // and the driven car's spotlight) — updateCity advanced the cycle above.
     vehicles.setNight(city.dayNight ? city.dayNight.nightFactor : 0);
+    boats.setNight(city.dayNight ? city.dayNight.nightFactor : 0);
     effects.update(delta, player.position, city.dayNight ? city.dayNight.rain.intensity : 0);
     // Garage toggle (G) — v2: handled outside the garageOpen gate so G
     // closes the panel too. Opening freezes the world (see the gate below).
@@ -333,17 +352,28 @@ function animate() {
         crew.togglePanel();
         audio.click();
       }
-      // Enter / exit car. At a safehouse on foot with no car close by,
-      // E saves the game instead (v3).
+      // Enter / exit car or boat. At a safehouse on foot with no car close
+      // by, E saves the game instead (v3). At the docks, E at the cyan
+      // crate ring starts a timed dock delivery run (v4).
       if (input.wasPressed('enter')) {
         if (player.onFoot) {
-          const car = vehicles.nearestTo(player.position, 5);
-          if (!car && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
-            safehouses.saveHere();
-            audio.click();
-          } else if (car) { car.enter(player); audio.click(); }
+          const boat = boats.nearestTo(player.position, 5);
+          if (boat) { boat.board(player); audio.click(); }
+          else {
+            const car = vehicles.nearestTo(player.position, 5);
+            if (!car && dockRun.isNearStart(player.position.x, player.position.z)) {
+              if (dockRun.start()) {
+                hud.toast('DOCK RUN — board a boat, deliver to the buoy (90s)');
+                audio.click();
+              }
+            } else if (!car && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
+              safehouses.saveHere();
+              audio.click();
+            } else if (car) { car.enter(player); audio.click(); }
+          }
         } else if (player.vehicle) {
-          player.vehicle.exit(player);
+          if (player.vehicle.isBoat) player.vehicle.disembark(player);
+          else player.vehicle.exit(player);
           audio.click();
         }
       }
@@ -404,6 +434,8 @@ function animate() {
       }
       player.update(delta, input, camYaw, city.colliders, vehicles.vehicles);
       vehicles.update(delta, input, player);
+      boats.update(delta, input, player, elapsed);
+      dockRun.update(delta);
       // v2: near-miss driving — pass a traffic car close at speed for +REP.
       if (player.vehicle && player.vehicle.speedMph > 25 && elapsed - lastNearMissAt > 5) {
         for (const v of vehicles.vehicles) {
@@ -418,7 +450,8 @@ function animate() {
         }
       }
       // Handbrake at speed leaves skid marks behind the player's car.
-      if (player.vehicle && input.held.handbrake && Math.abs(player.vehicle.speed) > 6) {
+      // (Not on a boat — no skids on water.)
+      if (player.vehicle && !player.vehicle.isBoat && input.held.handbrake && Math.abs(player.vehicle.speed) > 6) {
         const car = player.vehicle;
         const bx = car.position.x - Math.sin(car.heading) * 1.6;
         const bz = car.position.z - Math.cos(car.heading) * 1.6;
@@ -474,6 +507,8 @@ window.__game = {
   player,
   combat: player.combat,
   vehicles,
+  boats,
+  dockRun,
   pedestrians,
   police,
   missions,

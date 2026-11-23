@@ -7,9 +7,9 @@ import * as THREE from 'three';
 import { MISSIONS, DISTRICTS, SPAWNS, missionById } from './config.js';
 import {
   state, currentMission, currentObjective, advanceObjective,
-  completeMission, setWanted,
+  completeMission, setWanted, addMoney, addRep,
 } from './state.js';
-import { spawnPoint } from './city.js';
+import { spawnPoint, DOCK_RUN_START, DOCK_RUN_TARGET, BOAT_SPAWNS } from './city.js';
 
 const BEACON_RADIUS = 14;
 const DIALOGUE = {
@@ -47,18 +47,18 @@ const DIALOGUE = {
   fail_timeout: ['Marla Voss: "Too slow, Rico. The clock doesn\'t forgive — run it again."'],
 };
 
-function beaconMesh() {
+function beaconMesh(color = 0xffd23f) {
   const g = new THREE.Group();
   g.name = 'mission-beacon';
   const cyl = new THREE.Mesh(
     new THREE.CylinderGeometry(BEACON_RADIUS, BEACON_RADIUS, 60, 24, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
   );
   cyl.position.y = 30;
   g.add(cyl);
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(BEACON_RADIUS - 1.2, BEACON_RADIUS, 32),
-    new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.15;
@@ -217,4 +217,106 @@ export class MissionRunner {
 }
 
 export { MISSIONS, DIALOGUE };
+
+// --- Dock delivery (v4) --------------------------------------------------
+// A repeatable timed boat run, separate from the twelve story missions:
+// it never touches debt math, the mission list, or the save format.
+// Pick up the crate at the docks (E at the cyan ring), board a boat, and
+// deliver to the buoy out in the bay before the clock runs out.
+// Reward: $600 + 25 REP. Repeatable — start it again at the docks.
+export const DOCK_RUN_REWARD = 600;
+export const DOCK_RUN_REP = 25;
+export const DOCK_RUN_TIME = 90;
+
+export class DockDelivery {
+  constructor(scene, world) {
+    this.scene = scene;
+    this.world = world || {}; // { player }
+    // Cyan beacon so it reads as different from the story-mission beacon.
+    this.beacon = beaconMesh(0x35d0ff);
+    this.beacon.visible = false;
+    scene.add(this.beacon);
+    this.active = false;
+    this.phase = null; // 'board' | 'deliver'
+    this.timeLeft = 0;
+    this._time = 0;
+    this.onDialogue = null;  // fn(line) — main.js shows it in the HUD
+    this.onComplete = null;  // fn() — main.js toasts + saves
+    this.onFail = null;      // fn(reason)
+  }
+
+  say(lines) {
+    if (!lines) return;
+    for (const line of lines) {
+      if (this.onDialogue) this.onDialogue(line);
+      else if (typeof console !== 'undefined') console.log('[Solmar Heat]', line);
+    }
+  }
+
+  // True when the player is standing at the crate by the pier root.
+  isNearStart(x, z) {
+    return Math.hypot(x - DOCK_RUN_START.x, z - DOCK_RUN_START.z) < 6;
+  }
+
+  start() {
+    if (this.active) return false;
+    this.active = true;
+    this.phase = 'board';
+    this.timeLeft = DOCK_RUN_TIME;
+    // Phase 1 beacon sits over the moored boats.
+    this.beacon.position.set(BOAT_SPAWNS[0].x, 0, BOAT_SPAWNS[0].z);
+    this.beacon.visible = true;
+    this.say(['Danny "Fins" Cole: "Dock run! The crate goes to the buoy out in the bay — ninety seconds, Rico."']);
+    return true;
+  }
+
+  _complete() {
+    this.active = false;
+    this.phase = null;
+    this.beacon.visible = false;
+    addMoney(DOCK_RUN_REWARD);
+    addRep(DOCK_RUN_REP);
+    this.say(['Danny "Fins" Cole: "Crate delivered! Six hundred bucks, clean and dry."']);
+    if (this.onComplete) this.onComplete();
+  }
+
+  _fail(reason) {
+    this.active = false;
+    this.phase = null;
+    this.beacon.visible = false;
+    this.say(['Danny "Fins" Cole: "Too slow — the buyer sailed without you. Run it again at the docks."']);
+    if (this.onFail) this.onFail(reason);
+  }
+
+  update(dt) {
+    this._time += dt;
+    if (this.beacon.visible) {
+      this.beacon.userData.ring.rotation.z += dt * 0.5;
+      const s = 1 + Math.sin(this._time * 2.5) * 0.05;
+      this.beacon.scale.set(s, 1, s);
+    }
+    if (!this.active || state.gameOver) return;
+    this.timeLeft -= dt;
+    if (this.timeLeft <= 0) {
+      this._fail('timeout');
+      return;
+    }
+    const p = this.world.player;
+    if (!p) return;
+    if (this.phase === 'board') {
+      // Step completes when Rico is driving a boat.
+      if (p.vehicle && p.vehicle.isBoat) {
+        this.phase = 'deliver';
+        this.beacon.position.set(DOCK_RUN_TARGET.x, 0, DOCK_RUN_TARGET.z);
+        this.say(['Danny "Fins" Cole: "You\'re on the water — now hit the buoy marker!"']);
+      }
+    } else if (this.phase === 'deliver') {
+      const v = p.vehicle;
+      if (!v || !v.isBoat) return; // off the boat: the clock keeps running
+      const d = Math.hypot(v.position.x - DOCK_RUN_TARGET.x, v.position.z - DOCK_RUN_TARGET.z);
+      if (d < BEACON_RADIUS) this._complete();
+    }
+  }
+}
+
 export default MissionRunner;

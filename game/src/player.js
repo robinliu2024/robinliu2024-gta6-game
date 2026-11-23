@@ -41,7 +41,9 @@ export function isNearCover(pos, colliders, vehicles) {
 }
 
 function clampToCity(v) {
-  v.x = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, v.x));
+  // v4: the west edge opens onto the docks — Rico can walk out to the pier
+  // (x -420) to board a boat; the other three sides stay at +/-320.
+  v.x = Math.max(-420, Math.min(CITY.halfSize, v.x));
   v.z = Math.max(-CITY.halfSize, Math.min(CITY.halfSize, v.z));
   return v;
 }
