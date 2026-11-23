@@ -242,8 +242,8 @@ class AudioEngine {
       }
     } catch { /* audio unavailable */ }
   }
-  // --- Radio (v2): 3 synthesized stations, 16-step loops, no audio files.
-  // cycleRadio() steps OFF -> 1 -> 2 -> 3 -> OFF. Station state is kept
+  // --- Radio (v2, v4): 5 synthesized stations, 16-step loops, no audio files.
+  // cycleRadio() steps OFF -> 1 -> 2 -> 3 -> 4 -> 5 -> OFF. Station state is kept
   // even before the context exists; the scheduler only runs when ready.
   // midiToFreq converts the pattern notes (MIDI numbers, 0 = rest).
   _radioNoteFreq(midi) {
@@ -297,7 +297,7 @@ class AudioEngine {
     }
   }
 
-  // Cycle OFF -> station 1 -> 2 -> 3 -> OFF. Returns the station name or null.
+  // Cycle OFF -> station 1 -> 2 -> 3 -> 4 -> 5 -> OFF. Returns the station name or null.
   cycleRadio() {
     this.radioStation = this.radioStation >= RADIO_STATIONS.length - 1 ? -1 : this.radioStation + 1;
     if (this.radioStation < 0) {
@@ -334,6 +334,20 @@ const RADIO_STATIONS = [
     name: 'HEAT 107', bpm: 128, bassWave: 'square', leadWave: 'sawtooth',
     bass: [40, 40, 0, 40, 0, 40, 0, 0, 43, 43, 0, 43, 0, 45, 0, 0],
     lead: [76, 0, 76, 79, 0, 76, 0, 74, 76, 0, 79, 0, 81, 0, 79, 76],
+  },
+  {
+    // v4 station 4: PALM 91.1 — laid-back island groove, offbeat bass
+    // stabs (steps 2/6/10/14) and a sparse steel-drum-style lead.
+    name: 'PALM 91.1', bpm: 76, bassWave: 'triangle', leadWave: 'sine',
+    bass: [0, 0, 38, 0, 0, 0, 38, 0, 0, 0, 43, 0, 0, 0, 41, 0],
+    lead: [74, 0, 0, 0, 77, 0, 0, 74, 0, 0, 79, 0, 76, 0, 0, 0],
+  },
+  {
+    // v4 station 5: NEON 104.9 — synthwave night drive, driving eighth-note
+    // bass in A minor and a bright arpeggiated lead.
+    name: 'NEON 104.9', bpm: 112, bassWave: 'sawtooth', leadWave: 'square',
+    bass: [45, 0, 45, 0, 45, 0, 45, 0, 41, 0, 41, 0, 43, 0, 43, 0],
+    lead: [69, 72, 76, 81, 76, 72, 69, 0, 67, 71, 74, 79, 74, 71, 67, 0],
   },
 ];
 

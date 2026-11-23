@@ -14,7 +14,7 @@
 import { DISTRICTS } from './config.js';
 import { state, setWanted } from './state.js';
 
-export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission', 'heli', 'combat', 'race', 'garage', 'crew', 'territory', 'shop'];
+export const SHOT_NAMES = ['start', 'drive', 'chase', 'mission', 'heli', 'combat', 'race', 'garage', 'crew', 'territory', 'shop', 'action', 'boat', 'jump'];
 
 function putPlayerInCar(ctx, x, z, heading, speed) {
   const { player, vehicles } = ctx;
@@ -263,6 +263,108 @@ export function applyShotSetup(name, ctx) {
       camera.lookAt(86, 1.5, 22);
     }
     if (ctx.openShop) ctx.openShop();
+    return setup;
+  }
+
+  if (name === 'action') {
+    // v4 COVER: drift + helicopter + boats in one frame. Rico's car slides
+    // north on the western beach road (x=-320) at 4 stars, so the SBPD heli
+    // is overhead, the interceptors close in behind, and the moored boats
+    // sit in the bay to the west. The camera owns the frame (like the heli
+    // shot): low, southeast of the car, looking northwest and up at the
+    // midpoint between car and heli, biased west so the boats read in the
+    // background. The shoot harness holds Space + steer so the car is
+    // genuinely drifting (real slide, real skid marks) and stages the drift
+    // smoke at the rear wheels, because a cameraFn shot skips
+    // DrivingFun.update (see main.js) and the loop would never emit it.
+    putPlayerInCar(ctx, -320, 60, Math.PI, 20);
+    setWanted(4);
+    setup.autoDrive = true;
+    setup.camYaw = 0;
+    setup.camPitch = 0.3;
+    if (missions) missions.startMission('m8');
+    if (missions) missions.beacon.visible = false;
+    warmUpChase(ctx, 6);
+    setWanted(4);
+    // The warm-up rams spin the car around (cops close in on the bumper),
+    // so re-pose it: back on the beach road, nose north, rolling.
+    if (player.vehicle) {
+      player.vehicle.position.set(-320, 0, 60);
+      player.vehicle.heading = Math.PI;
+      player.vehicle.mesh.rotation.y = Math.PI;
+      player.vehicle.speed = 20;
+    }
+    player.position.set(-320, 0, 60);
+    player.heading = Math.PI;
+    if (camera) {
+      camera.fov = 85;
+      camera.updateProjectionMatrix();
+    }
+    // Southeast camera (fifth try, back to the probe-1 geometry that read
+    // best): ~55 m out, looking northwest and up, so the heli + searchlight
+    // stay a narrow beam instead of a wall, the car stays framed on the
+    // beach road, and the moored boats sit in the bay at the left edge.
+    // The car is small at this range, so the harness stages a DENSE smoke
+    // cloud (triple bursts) — a 3–4 m white puff behind the car is what
+    // makes the drift read at 55 m.
+    setup.cameraFn = (cam) => {
+      const p = player.vehicle ? player.vehicle.position : player.position;
+      const h = police.heli ? police.heli.position : { x: p.x + 12, y: 58, z: p.z + 8 };
+      cam.position.set(p.x + 38, 7, p.z + 42);
+      cam.lookAt((p.x + h.x) / 2 - 18, 22, (p.z + h.z) / 2 - 6);
+    };
+    return setup;
+  }
+
+  if (name === 'jump') {
+    // v4 stunt-ramp jump: same rolling start as drive, but the camera is
+    // OWNED at ground level behind the car instead of following it — the
+    // follow camera rises with the car, which hides the height completely.
+    // From 20 m back at y=2.2, a car 3–5 m up reads as flying, with the
+    // ramp, the street and the Downtown towers behind it. (A cameraFn shot
+    // skips DrivingFun.update, so there is no nitro FOV stretch or AIR TIME
+    // popup in this frame — the jump itself is the story.)
+    putPlayerInCar(ctx, 64, 150, Math.PI, 20);
+    setup.autoDrive = true;
+    setup.camYaw = 0;
+    setup.camPitch = 0.3;
+    if (missions) missions.startMission('m1');
+    setup.cameraFn = (cam) => {
+      const p = player.vehicle ? player.vehicle.position : player.position;
+      cam.position.set(p.x + 3, 2.2, p.z + 20);
+      cam.lookAt(p.x - 1, 3.5, p.z - 25);
+    };
+    return setup;
+  }
+
+  if (name === 'boat') {
+    // v4 dock run: Rico boards the first moored boat with the crate run
+    // already started, so the cyan beacon sits over the delivery buoy out
+    // in the bay and the HUD shows the run timer. The boat is aimed at the
+    // buoy and auto-throttles (W), so the shot catches it under way with
+    // the city and the pier behind it.
+    if (ctx.dockRun) ctx.dockRun.start();
+    const boat = ctx.boats ? ctx.boats.boats[0] : null;
+    if (boat) {
+      // Aim at the delivery buoy, then board: the run's 'board' phase
+      // completes the moment Rico is driving a boat.
+      const dx = -520 - boat.position.x;
+      const dz = 120 - boat.position.z;
+      boat.heading = Math.atan2(dx, dz);
+      boat.mesh.rotation.y = boat.heading;
+      if (player.vehicle) player.vehicle.exit(player);
+      player.position.set(boat.position.x, 0, boat.position.z);
+      boat.board(player);
+      player.position.copy(boat.position);
+    }
+    setup.autoDrive = true;
+    // Camera AHEAD of the boat (west of it, looking east): the bow faces
+    // the lens with the Harbor pier and the golden-hour city behind it, and
+    // the low western sun lights the hull instead of shadowing it. The
+    // delivery buoy sits behind the camera — the run still reads in the
+    // HUD (timer + Danny's line). Slightly raised pitch so the deck reads.
+    setup.camYaw = -Math.PI / 2;
+    setup.camPitch = 0.38;
     return setup;
   }
 
