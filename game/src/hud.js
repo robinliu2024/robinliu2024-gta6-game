@@ -421,13 +421,15 @@ export function createHud(deps = {}) {
     refs.hud.appendChild(coverEl);
   }
 
-  // Controls hint: add the v2 keys (weapons 1/2/3/4, garage G, radio C),
-  // the v3 crew key (K), and the v3 shop / safehouse keys (B, E, T).
+  // Controls hint (v4, Builder 8): the full hint now lives as one static
+  // line in index.html, shortened to fit on one line clear of the minimap
+  // at 1024x576 (measured 838px of 854px available) as well as 1280x720.
+  // Every key binding is kept; E covers enter car / save / side jobs
+  // (the proximity hint spells out the context in-game). Keep it short:
+  // the old appended line wrapped to two lines and ran under the minimap.
   // C is the radio in a car and the crouch key on foot (v3 cover).
   const controlsEl = el('hud-controls');
-  if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse · Space handbrake drift · Shift nitro · E side jobs at the coloured rings (taxi / courier / ambulance)';
-  }
+  if (controlsEl) controlsEl.style.whiteSpace = 'nowrap';
 
   let lastObjective = '';
   function update(dt, elapsed) {
