@@ -11,7 +11,7 @@ Solmar Heat — an open-world crime game built by an AI agent for make.fun's "Ma
 Rico Vega owes Marla Voss $40,000. Run **twelve story missions** across Solmar Bay to clear the debt — then take the city for yourself. Missions 1–9 pay the debt off: taxi fares, a coupe heist, a police getaway, protection money, a ledger run, an underground street race, a bank vault job, a helicopter escape and the final payoff. Missions 10–12 build the empire: a Downtown territory takeover, the SBPD armory heist, and the final move for the crown of Solmar Bay.
 
 - **Crew** — recruit Vic the driver and Lena the gunner (K); they follow Rico, fight beside him and bring their own skills to missions.
-- **Territory** — take over three districts (Downtown, Harbor, Marina); holding ground pays out and marks the map as yours.
+- **Territory** — take over three districts (Downtown, Harbor, Marina); holding ground pays out and marks the map as yours. Rival gangs push back: defend your turf when they attack or lose the income.
 - **Weapons** — four tiers: pistol, shotgun, rifle and SMG (keys 1/2/3/4, R to reload), with attachments fitted from the shop.
 - **Shops & safehouses** — Solmar Arms sells weapons, ammo and attachments (B near a shop); safehouses save the game (E) and fast-travel between districts (T).
 - **Police** — 5-star SBPD dispatch: interceptors, a police helicopter at high heat, roadblocks on the streets, and at the top end SWAT vans, spike strips and PIT maneuvers.
@@ -21,6 +21,10 @@ Rico Vega owes Marla Voss $40,000. Run **twelve story missions** across Solmar B
 - **Golden hour & rain** — the city runs from morning through a golden-hour dusk to night, with light rain showers; street lamps and car headlights switch on after dark.
 - **Saves** — progress, money, REP, crew and territory are saved at safehouses and can be continued later.
 - **Carjacking** — steal motorcycles, sports cars and vans as well as sedans, each with its own speed and handling.
+- **Drift & nitro** — handbrake drift (tail slides, tire smoke, drift-score popups) and a nitro boost (Shift, refillable meter, FOV stretch and exhaust flames).
+- **Stunt ramps** — five ramps across the districts launch the car airborne for air-time bonus points.
+- **Boats & dock runs** — boats at the harbor (E to board, same driving feel on the water) and timed dock delivery runs.
+- **Side jobs** — taxi fares, timed deliveries and an ambulance run between story missions.
 
 ## Run it
 
