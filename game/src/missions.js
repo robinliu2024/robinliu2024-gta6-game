@@ -320,3 +320,264 @@ export class DockDelivery {
 }
 
 export default MissionRunner;
+
+// --- Side jobs (v4, B5) ---------------------------------------------------
+// Three short repeatable jobs, separate from the twelve story missions:
+// they never touch debt math, the mission list, or the save format.
+// Taxi fare (Harbor stand), courier run (Downtown depot), ambulance rush
+// (Boardwalk clinic). Start one on foot with E at its coloured ring; each
+// pays cash + a little REP. Repeatable — walk back to the ring and run it
+// again. The taxi passenger only rides in a car; the courier parcel and
+// the ambulance patient are picked up on foot, then delivered on the clock.
+export const SIDE_JOB_START_RADIUS = 6;
+export const SIDE_JOB_HOSPITAL = { x: 192, z: 96, name: 'Solmar General Hospital' };
+export const SIDE_JOB_DEFS = {
+  taxi: {
+    id: 'taxi', name: 'Taxi Fare', color: 0xffd23f, colorCss: '#ffd23f',
+    figureColor: 0xffd23f, district: 'harbor',
+    start: { x: -240, z: 200 }, reward: 250, rep: 10, time: 150,
+    hint: 'E — Taxi job',
+    startLines: ['Danny "Fins" Cole: "Taxi fare! A passenger\'s waiting at the Harbor stand — get them in your car."'],
+    doneLines: ['Danny "Fins" Cole: "Fare paid! Two-fifty, plus a little respect."'],
+    timeoutLines: ['Danny "Fins" Cole: "Too slow — the passenger caught another cab. The stand\'s still there when you want it."'],
+    failLines: ['Danny "Fins" Cole: "Fare\'s off, Rico. The passenger walked away."'],
+  },
+  courier: {
+    id: 'courier', name: 'Courier Run', color: 0xff9a1a, colorCss: '#ff9a1a',
+    figureColor: 0x8a6a3b, district: 'downtown',
+    start: { x: 40, z: 20 }, reward: 350, rep: 12, time: 75,
+    hint: 'E — Courier job',
+    startLines: ['Danny "Fins" Cole: "Courier run! Grab the parcel at the Downtown depot — seventy-five seconds, Rico."'],
+    doneLines: ['Danny "Fins" Cole: "Parcel delivered, on time! Three-fifty for the run."'],
+    timeoutLines: ['Danny "Fins" Cole: "Too slow — the parcel went back to the depot. Run it again."'],
+    failLines: ['Danny "Fins" Cole: "Run\'s off. The parcel\'s back at the depot."'],
+  },
+  ambulance: {
+    id: 'ambulance', name: 'Ambulance Rush', color: 0xff4d4d, colorCss: '#ff4d4d',
+    figureColor: 0xeeeeee, district: 'boardwalk',
+    start: { x: -280, z: -40 }, reward: 450, rep: 15, time: 100,
+    hint: 'E — Ambulance job',
+    startLines: ['Danny "Fins" Cole: "Ambulance rush! A man\'s down at the Boardwalk clinic — get him to Solmar General, fast. Run the reds if you have to."'],
+    doneLines: ['Danny "Fins" Cole: "He made it! Four-fifty — the hospital sends its thanks."'],
+    timeoutLines: ['Danny "Fins" Cole: "Too slow — another crew took the patient. The clinic will call again."'],
+    failLines: ['Danny "Fins" Cole: "Rush is off. The patient\'s still at the clinic."'],
+  },
+};
+
+function buildJobFigure(shirtColor, lying) {
+  const g = new THREE.Group();
+  const shirt = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.85 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0xc98d5f, roughness: 0.8 });
+  const pants = new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: 0.9 });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.32), shirt);
+  torso.position.y = 1.05;
+  torso.castShadow = true;
+  g.add(torso);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.3), skin);
+  head.position.y = 1.6;
+  g.add(head);
+  for (const sx of [-0.15, 0.15]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.62, 0.22), pants);
+    leg.position.set(sx, 0.31, 0);
+    g.add(leg);
+  }
+  if (lying) g.rotation.z = Math.PI / 2;
+  return g;
+}
+
+function buildCrate() {
+  const g = new THREE.Group();
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, 0.9, 0.9),
+    new THREE.MeshStandardMaterial({ color: 0x8a6a3b, roughness: 0.9 }),
+  );
+  box.position.y = 0.45;
+  box.castShadow = true;
+  g.add(box);
+  const tape = new THREE.Mesh(
+    new THREE.BoxGeometry(0.94, 0.12, 0.94),
+    new THREE.MeshStandardMaterial({ color: 0xd8c27a, roughness: 0.8 }),
+  );
+  tape.position.y = 0.45;
+  g.add(tape);
+  return g;
+}
+
+export class SideJobs {
+  constructor(scene, world) {
+    this.scene = scene;
+    this.world = world || {}; // { player }
+    // One beacon, recoloured per job — yellow taxi, orange courier, red
+    // ambulance — so it never reads as the gold story-mission beacon.
+    this.beacon = beaconMesh(0xffd23f);
+    this.beacon.visible = false;
+    scene.add(this.beacon);
+    this._beaconCylMat = this.beacon.children[0].material;
+    this._beaconRingMat = this.beacon.userData.ring.material;
+    this.active = null; // { def, phase, timeLeft, dest }
+    this._time = 0;
+    this.onDialogue = null;  // fn(line) — main.js shows it in the HUD
+    this.onComplete = null;  // fn(job) — main.js toasts + saves
+    this.onFail = null;      // fn(job, reason)
+    // Start markers stay on the map so the jobs are discoverable: a
+    // coloured ground ring + the waiting passenger / parcel / patient.
+    // The figure hides while its job is running and comes back after.
+    this._markers = new Map();
+    for (const def of Object.values(SIDE_JOB_DEFS)) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(4.6, 5.6, 32),
+        new THREE.MeshBasicMaterial({
+          color: def.color, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(def.start.x, 0.12, def.start.z);
+      scene.add(ring);
+      const figure = def.id === 'courier'
+        ? buildCrate()
+        : buildJobFigure(def.figureColor, def.id === 'ambulance');
+      figure.position.set(def.start.x, def.id === 'ambulance' ? 0.3 : 0, def.start.z);
+      scene.add(figure);
+      this._markers.set(def.id, { ring, figure });
+    }
+  }
+
+  say(lines) {
+    if (!lines) return;
+    for (const line of lines) {
+      if (this.onDialogue) this.onDialogue(line);
+      else if (typeof console !== 'undefined') console.log('[Solmar Heat]', line);
+    }
+  }
+
+  // The start point the player is standing at (within 6 m), or null.
+  // Null while a job is running — one job at a time.
+  nearStart(x, z) {
+    if (this.active) return null;
+    for (const def of Object.values(SIDE_JOB_DEFS)) {
+      if (Math.hypot(x - def.start.x, z - def.start.z) < SIDE_JOB_START_RADIUS) return def;
+    }
+    return null;
+  }
+
+  get beaconColor() {
+    return this.active ? this.active.def.colorCss : null;
+  }
+
+  _setBeaconColor(color) {
+    this._beaconCylMat.color.set(color);
+    this._beaconRingMat.color.set(color);
+  }
+
+  _showMarker(id, visible) {
+    const m = this._markers.get(id);
+    if (m) m.figure.visible = visible;
+  }
+
+  _pickDestination(excludeKey) {
+    const keys = Object.keys(DISTRICTS).filter((k) => k !== excludeKey);
+    const key = keys[Math.floor(Math.random() * keys.length)];
+    const d = DISTRICTS[key];
+    return { key, x: d.x, z: d.z, name: d.name };
+  }
+
+  start(id) {
+    if (this.active) return false;
+    const def = SIDE_JOB_DEFS[id];
+    if (!def) return false;
+    const dest = def.id === 'ambulance'
+      ? { key: 'hospital', x: SIDE_JOB_HOSPITAL.x, z: SIDE_JOB_HOSPITAL.z, name: SIDE_JOB_HOSPITAL.name }
+      : this._pickDestination(def.district);
+    this.active = { def, phase: 'pickup', timeLeft: def.time, dest };
+    this._setBeaconColor(def.color);
+    this.beacon.position.set(def.start.x, 0, def.start.z);
+    this.beacon.visible = true;
+    this.say(def.startLines);
+    return true;
+  }
+
+  _complete() {
+    const job = this.active;
+    this.active = null;
+    this.beacon.visible = false;
+    this._showMarker(job.def.id, true);
+    addMoney(job.def.reward);
+    addRep(job.def.rep);
+    this.say(job.def.doneLines);
+    if (this.onComplete) this.onComplete(job);
+  }
+
+  // Idempotent: safe to call when no job is running (busted / wasted).
+  fail(reason) {
+    if (!this.active) return;
+    const job = this.active;
+    this.active = null;
+    this.beacon.visible = false;
+    this._showMarker(job.def.id, true);
+    this.say(reason === 'timeout' ? job.def.timeoutLines : job.def.failLines);
+    if (this.onFail) this.onFail(job, reason);
+  }
+
+  // One-line status for the HUD while a job is running.
+  statusText() {
+    if (!this.active) return '';
+    const { def, phase, timeLeft, dest } = this.active;
+    const t = Math.max(0, Math.ceil(timeLeft));
+    const clock = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    let phaseText;
+    if (phase === 'pickup') {
+      phaseText = def.id === 'taxi'
+        ? 'pick up the passenger (in a car)'
+        : def.id === 'courier' ? 'grab the parcel' : 'reach the patient';
+    } else {
+      phaseText = `deliver to ${dest.name}`;
+    }
+    return `SIDE JOB · ${def.name} — ${phaseText} · ${clock}`;
+  }
+
+  update(dt) {
+    this._time += dt;
+    if (this.beacon.visible) {
+      this.beacon.userData.ring.rotation.z += dt * 0.5;
+      const s = 1 + Math.sin(this._time * 2.5) * 0.05;
+      this.beacon.scale.set(s, 1, s);
+    }
+    if (!this.active || state.gameOver) return;
+    const job = this.active;
+    job.timeLeft -= dt;
+    if (job.timeLeft <= 0) {
+      this.fail('timeout');
+      return;
+    }
+    const p = this.world.player;
+    if (!p) return;
+    const pos = p.position;
+    if (job.phase === 'pickup') {
+      if (job.def.id === 'taxi') {
+        // The passenger only rides in a car: drive up to the stand.
+        if (p.vehicle && Math.hypot(p.vehicle.position.x - job.def.start.x, p.vehicle.position.z - job.def.start.z) < 8) {
+          job.phase = 'dropoff';
+          this._showMarker('taxi', false);
+          this.beacon.position.set(job.dest.x, 0, job.dest.z);
+          this.say([`Danny "Fins" Cole: "Passenger's in — take them to ${job.dest.name}."`]);
+        }
+      } else if (Math.hypot(pos.x - job.def.start.x, pos.z - job.def.start.z) < SIDE_JOB_START_RADIUS) {
+        job.phase = 'deliver';
+        this._showMarker(job.def.id, false);
+        this.beacon.position.set(job.dest.x, 0, job.dest.z);
+        this.say([job.def.id === 'courier'
+          ? `Danny "Fins" Cole: "Parcel's in hand — get it to ${job.dest.name}."`
+          : `Danny "Fins" Cole: "Patient's loaded — get him to ${job.dest.name}, fast!"`]);
+      }
+    } else {
+      // Dropoff / deliver: arrive at the destination marker. The taxi
+      // fare only pays if the passenger is still in the car.
+      const needCar = job.def.id === 'taxi';
+      const at = p.vehicle ? p.vehicle.position : pos;
+      if ((!needCar || p.vehicle)
+        && Math.hypot(at.x - job.dest.x, at.z - job.dest.z) < BEACON_RADIUS) {
+        this._complete();
+      }
+    }
+  }
+}

@@ -30,7 +30,12 @@ export function createInitialState() {
     crew: { recruited: [], health: {} },
     // Territory (territory.js, v3): owned zone ids + cop downs per zone
     // toward a free capture + total turf income earned. Persisted.
-    territory: { owned: [], copDowns: { harbor: 0, downtown: 0, suburbs: 0 }, totalEarned: 0 },
+    // defense (v4): null, or the live attack snapshot { zoneId,
+    // attackersLeft, timeLeft } — a save made mid-fight restores it.
+    territory: {
+      owned: [], copDowns: { harbor: 0, downtown: 0, suburbs: 0 }, totalEarned: 0,
+      defense: null,
+    },
     // Bulletproof vest (shop.js, v3): bought once, -25% damage taken.
     // Persisted in the save.
     vest: false,
@@ -164,10 +169,20 @@ export function saveShape() {
       health: { ...((state.crew && state.crew.health) || {}) },
     },
     // Territory (territory.js, v3): older saves own nothing.
+    // defense (v4): older saves were never attacked — null.
     territory: {
       owned: [...((state.territory && state.territory.owned) || [])],
       copDowns: { harbor: 0, downtown: 0, suburbs: 0, ...((state.territory && state.territory.copDowns) || {}) },
       totalEarned: (state.territory && state.territory.totalEarned) || 0,
+      defense: (() => {
+        const d = state.territory && state.territory.defense;
+        if (!d || typeof d !== 'object' || !d.zoneId) return null;
+        return {
+          zoneId: d.zoneId,
+          attackersLeft: typeof d.attackersLeft === 'number' ? d.attackersLeft : 0,
+          timeLeft: typeof d.timeLeft === 'number' ? Math.max(0, Math.ceil(d.timeLeft)) : 0,
+        };
+      })(),
     },
     vest: !!state.vest,
     // Weapons (combat.js / shop.js, v3): current + ammo + ownership +
@@ -232,6 +247,8 @@ export function applySave(data) {
     health: { ...((data.crew && data.crew.health) || {}) },
   };
   // Older saves have no territory block; default to nothing owned.
+  // Older saves also have no defense snapshot — null, never attacked.
+  const savedDefense = (data.territory && data.territory.defense) || null;
   state.territory = {
     owned: Array.isArray(data.territory && data.territory.owned) ? [...data.territory.owned] : [],
     copDowns: {
@@ -239,6 +256,13 @@ export function applySave(data) {
       ...((data.territory && data.territory.copDowns) || {}),
     },
     totalEarned: (data.territory && data.territory.totalEarned) || 0,
+    defense: (savedDefense && typeof savedDefense === 'object' && savedDefense.zoneId)
+      ? {
+        zoneId: savedDefense.zoneId,
+        attackersLeft: typeof savedDefense.attackersLeft === 'number' ? savedDefense.attackersLeft : 0,
+        timeLeft: typeof savedDefense.timeLeft === 'number' ? Math.max(0, savedDefense.timeLeft) : 0,
+      }
+      : null,
   };
   // Older saves have no vest; default to unprotected.
   state.vest = !!data.vest;

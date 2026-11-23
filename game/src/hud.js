@@ -6,7 +6,7 @@
 import { CITY, DISTRICTS, MAX_WANTED } from './config.js';
 import { state, currentMission, currentObjective } from './state.js';
 import { repTier } from './garage.js';
-import { TERRITORY_ZONES, COP_DOWNS_TO_CAPTURE, INCOME_PER_ZONE_PER_DAY } from './territory.js';
+import { TERRITORY_ZONES, COP_DOWNS_TO_CAPTURE, INCOME_PER_ZONE_PER_DAY, zoneDef } from './territory.js';
 import { WEAPON_ITEMS } from './shop.js';
 import { roadLines, districtAt } from './city.js';
 
@@ -24,6 +24,7 @@ export function createHud(deps = {}) {
   const getTerritory = deps.getTerritory || (() => null);
   const getShop = deps.getShop || (() => null);
   const getSafehouses = deps.getSafehouses || (() => null);
+  const getSideJobs = deps.getSideJobs || (() => null);
   // Dialogue hold: main.js owns the timer; we only ask whether a line is
   // still live and what it says, and never overwrite it while it is live.
   const getDialogue = deps.getDialogue || (() => ({ text: '', active: false }));
@@ -154,7 +155,7 @@ export function createHud(deps = {}) {
   const mapX = (x) => ((x + WORLD) / (WORLD * 2)) * 140;
   const mapY = (z) => ((z + WORLD) / (WORLD * 2)) * 140;
 
-  function drawMinimap() {
+  function drawMinimap(elapsed = 0) {
     if (!mapCtx) return;
     const ctx = mapCtx;
     const S = 140;
@@ -229,6 +230,35 @@ export function createHud(deps = {}) {
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
+    // Side-job beacon (v4, B5): the active job's target in its own colour.
+    const sideJobs = getSideJobs();
+    if (sideJobs && sideJobs.beacon && sideJobs.beacon.visible) {
+      const b = sideJobs.beacon.position;
+      ctx.fillStyle = sideJobs.beaconColor || '#ffd23f';
+      ctx.beginPath();
+      ctx.arc(mapX(b.x), mapY(b.z), 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    // Territory defense (v4, B6): pulsing red ring + ! over the zone
+    // under attack so the player can find the fight at a glance.
+    const territory = getTerritory();
+    if (territory && territory.defense) {
+      const def = zoneDef(territory.defense.zoneId);
+      if (def) {
+        const pulse = 6 + Math.sin(elapsed * 6) * 2;
+        ctx.strokeStyle = '#ff4d4d';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(mapX(def.x), mapY(def.z), pulse, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#ff4d4d';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('!', mapX(def.x), mapY(def.z) + 4);
+      }
+    }
     const police = getPolice();
     if (police && police.cops) {
       ctx.fillStyle = '#ff4d4d';
@@ -296,6 +326,22 @@ export function createHud(deps = {}) {
     toastEl.style.display = 'block';
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
+  }
+
+  // Side-job status line (v4, B5): persistent while a taxi / courier /
+  // ambulance job is running — name, phase and the clock. Sits just
+  // below the toast so the two never overlap.
+  let sideJobEl = el('hud-sidejob');
+  if (!sideJobEl && refs.hud) {
+    sideJobEl = document.createElement('div');
+    sideJobEl.id = 'hud-sidejob';
+    sideJobEl.style.cssText = [
+      'position:absolute', 'left:50%', 'top:150px', 'transform:translateX(-50%)',
+      'background:rgba(0,0,0,0.65)', 'color:#ffd23f', 'font-size:14px', 'font-weight:700',
+      'padding:6px 14px', 'border-radius:6px', 'text-shadow:0 1px 4px rgba(0,0,0,0.9)',
+      'display:none', 'white-space:nowrap', 'pointer-events:none',
+    ].join(';');
+    refs.hud.appendChild(sideJobEl);
   }
 
   // --- Driving fun pack (v4, Builder 3): drift / air-time score popups
@@ -380,7 +426,7 @@ export function createHud(deps = {}) {
   // C is the radio in a car and the crouch key on foot (v3 cover).
   const controlsEl = el('hud-controls');
   if (controlsEl && !controlsEl.textContent.includes('G garage')) {
-    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse · Space handbrake drift · Shift nitro';
+    controlsEl.textContent += ' · 1/2/3/4 weapons · G garage · C radio / crouch · K crew · B shop · E save / T travel at safehouse · Space handbrake drift · Shift nitro · E side jobs at the coloured rings (taxi / courier / ambulance)';
   }
 
   let lastObjective = '';
@@ -501,6 +547,7 @@ export function createHud(deps = {}) {
     }
     // Territory panel (v3): owned zones pay $400/day each; unowned zones
     // show the free-capture progress (3 police downs in the zone).
+    // v4: a zone under attack shows the fight — attackers left + clock.
     if (refs.turf) {
       const territory = getTerritory();
       const owned = territory ? territory.owned : [];
@@ -508,16 +555,25 @@ export function createHud(deps = {}) {
       for (const zone of TERRITORY_ZONES) {
         const isOwned = owned.includes(zone.id);
         const progress = territory ? territory.copDownsIn(zone.id) : 0;
-        const line = isOwned
-          ? `<span style="color:#7dff8a;">OWNED · +$${INCOME_PER_ZONE_PER_DAY}/day</span>`
-          : (zone.id === 'downtown'
-            ? `<span style="color:#bbb;">M10 takes it · or ${progress}/${COP_DOWNS_TO_CAPTURE} cop downs</span>`
-            : `<span style="color:#bbb;">${progress}/${COP_DOWNS_TO_CAPTURE} cop downs to take</span>`);
+        const def = territory && territory.defense;
+        const underAttack = def && def.zoneId === zone.id;
+        let line;
+        if (underAttack) {
+          const alive = def.attackers.filter((a) => !a.down).length;
+          line = `<span style="color:#ff7d7d;">UNDER ATTACK! ${alive} left · ${Math.max(0, Math.ceil(def.timeLeft))}s</span>`;
+        } else if (isOwned) {
+          line = `<span style="color:#7dff8a;">OWNED · +$${INCOME_PER_ZONE_PER_DAY}/day</span>`;
+        } else if (zone.id === 'downtown') {
+          line = `<span style="color:#bbb;">M10 takes it · or ${progress}/${COP_DOWNS_TO_CAPTURE} cop downs</span>`;
+        } else {
+          line = `<span style="color:#bbb;">${progress}/${COP_DOWNS_TO_CAPTURE} cop downs to take</span>`;
+        }
         html += `<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;"><span>${zone.name}</span>${line}</div>`;
       }
       if (refs.turf.innerHTML !== html) refs.turf.innerHTML = html;
     }
     // Proximity hint (v3): shop / safehouse keys when standing near one.
+    // v4: side-job rings (taxi / courier / ambulance) add their own key.
     if (refs.hint && player) {
       const shop = getShop();
       const safehouses = getSafehouses();
@@ -527,6 +583,11 @@ export function createHud(deps = {}) {
       }
       if (safehouses && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
         hints.push('E — Save game · T — Travel · G — Garage');
+      }
+      const sideJobs = getSideJobs();
+      if (sideJobs && !sideJobs.active) {
+        const near = sideJobs.nearStart(player.position.x, player.position.z);
+        if (near) hints.push(near.hint);
       }
       const text = hints.join(' &nbsp;·&nbsp; ');
       if (text) {
@@ -541,7 +602,18 @@ export function createHud(deps = {}) {
       const show = !!player && player.onFoot && state.started && !state.gameOver && !state.paused;
       refs.crosshair.style.display = show ? 'block' : 'none';
     }
-    drawMinimap();
+    // Side-job status (v4, B5): name + phase + clock while a job runs.
+    if (sideJobEl) {
+      const sj = getSideJobs();
+      const text = sj ? sj.statusText() : '';
+      if (text) {
+        sideJobEl.textContent = text;
+        sideJobEl.style.display = 'block';
+      } else {
+        sideJobEl.style.display = 'none';
+      }
+    }
+    drawMinimap(elapsed);
   }
 
   return { update, drawMinimap, refs, toast, scorePopup, showDrift, hideDrift, setNitro };

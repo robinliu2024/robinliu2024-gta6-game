@@ -12,7 +12,7 @@ import { Player } from './player.js';
 import { VehicleManager, BoatManager } from './vehicles.js';
 import { PedestrianManager } from './pedestrians.js';
 import { PoliceManager } from './police.js';
-import { MissionRunner, DockDelivery, DOCK_RUN_REWARD, DOCK_RUN_REP } from './missions.js';
+import { MissionRunner, DockDelivery, SideJobs, DOCK_RUN_REWARD, DOCK_RUN_REP } from './missions.js';
 import { audio } from './audio.js';
 import { createHud } from './hud.js';
 import { Effects } from './effects.js';
@@ -86,6 +86,17 @@ dockRun.onComplete = () => {
 };
 dockRun.onFail = () => { audio.fail(); };
 
+// v4: side jobs (B5) — taxi / courier / ambulance. Short repeatable jobs
+// at coloured rings around the city, separate from the story missions.
+const sideJobs = new SideJobs(scene, world);
+world.sideJobs = sideJobs;
+sideJobs.onComplete = (job) => {
+  audio.sting();
+  saveGame();
+  hud.toast(`${job.def.name} complete — +$${job.def.reward} · +${job.def.rep} REP`, 3500);
+};
+sideJobs.onFail = () => { audio.fail(); };
+
 // v3: crew system — recruits follow Rico, the gunner fights in missions,
 // the driver softens police pressure (see police.crewModifiers below).
 const crew = new CrewManager(scene, world);
@@ -97,7 +108,7 @@ crew.onRecruit = (def) => {
 
 // v3: territory + shops & safehouses (Builder 2). The territory manager
 // fills the world.territory slot the M10 hook already calls.
-const territory = new TerritoryManager(scene);
+const territory = new TerritoryManager(scene, { colliders: city.colliders });
 world.territory = territory;
 territory.onCapture = (def) => {
   audio.sting();
@@ -105,6 +116,22 @@ territory.onCapture = (def) => {
 };
 territory.onIncome = (amount, count) => {
   hud.toast(`Turf income +$${amount.toLocaleString('en-US')} (${count} zone${count > 1 ? 's' : ''})`, 3500);
+};
+// v4: territory defense (B6) — a rival crew hits an owned zone; hold it
+// or lose the turf and its income.
+territory.onDefenseStart = (def) => {
+  audio.fail();
+  hud.toast(`RIVAL CREW ATTACKING ${def.name.toUpperCase()} — defend your turf!`, 5000);
+};
+territory.onDefenseWon = (def, bonus) => {
+  audio.sting();
+  saveGame();
+  hud.toast(`${def.name} held! +$${bonus} defense bonus`, 3500);
+};
+territory.onDefenseLost = (def) => {
+  audio.fail();
+  saveGame();
+  hud.toast(`${def.name} LOST — rival crew took your turf`, 4500);
 };
 // Owned turf calms the locals: pedestrians stop fleeing gunfire there.
 pedestrians.calmAt = (pos) => territory.isOwnedAt(pos.x, pos.z);
@@ -128,13 +155,17 @@ world.effects = effects; // v3: crew gunner tracers go through effects
 police.effects = effects;
 // v3: explosions need the effects module for fire / smoke / shockwave.
 vehicles.effects = effects;
+// v4: rival attackers shoot tracers through the same effects module.
+territory.effects = effects;
 // Combat targets: live cops (downed ones stop being targets) + living peds
 // + drivable vehicles (shooting a car can blow it up — see vehicles.js).
 // Mission gang members, when they exist, join this list the same way.
+// v4: rival attackers during a territory defense are shootable too.
 player.setTargetProvider(() => [
   ...police.shootables(),
   ...pedestrians.peds.filter((p) => p.alive),
   ...vehicles.vehicles.filter((v) => !v.wrecked),
+  ...territory.defenseTargets(),
 ]);
 const saveManager = createSaveManager({ getMissions: () => missions });
 
@@ -147,6 +178,10 @@ missions.onDialogue = (line) => {
   dialogueAt = elapsed;
 };
 dockRun.onDialogue = (line) => {
+  dialogueText = line;
+  dialogueAt = elapsed;
+};
+sideJobs.onDialogue = (line) => {
   dialogueText = line;
   dialogueAt = elapsed;
 };
@@ -163,7 +198,12 @@ missions.onComplete = (mission) => {
   hud.toast(msg, 3500);
 };
 missions.onFail = () => { audio.fail(); };
-police.onBusted = () => { missions.failMission('busted'); audio.fail(); };
+police.onBusted = () => {
+  missions.failMission('busted');
+  sideJobs.fail('busted');
+  territory.onPlayerDown();
+  audio.fail();
+};
 police.onCrime = () => { audio.click(); };
 
 // --- HUD (part C): health, money, rep, debt, stars, objective with the
@@ -176,6 +216,7 @@ const hud = createHud({
   getTerritory: () => territory,
   getShop: () => shop,
   getSafehouses: () => safehouses,
+  getSideJobs: () => sideJobs,
   getDialogue: () => ({ text: dialogueText, active: elapsed - dialogueAt < 5 }),
 });
 function updateHud() {
@@ -292,7 +333,7 @@ let gameOverShown = false;
 let shotSetup = null;
 if (state.shot) {
   shotSetup = applyShotSetup(state.shot, {
-    player, vehicles, police, missions, camera, crew, territory, shop, safehouses,
+    player, vehicles, boats, dockRun, police, missions, camera, crew, territory, shop, safehouses,
     hideStartScreen: () => show(startScreen, false),
     openGarage: () => openGarage(),
     openShop: () => openShop(),
@@ -366,7 +407,8 @@ function animate() {
       }
       // Enter / exit car or boat. At a safehouse on foot with no car close
       // by, E saves the game instead (v3). At the docks, E at the cyan
-      // crate ring starts a timed dock delivery run (v4).
+      // crate ring starts a timed dock delivery run (v4). At a coloured
+      // side-job ring, E starts a taxi / courier / ambulance job (v4).
       if (input.wasPressed('enter')) {
         if (player.onFoot) {
           const boat = boats.nearestTo(player.position, 5);
@@ -376,6 +418,12 @@ function animate() {
             if (!car && dockRun.isNearStart(player.position.x, player.position.z)) {
               if (dockRun.start()) {
                 hud.toast('DOCK RUN — board a boat, deliver to the buoy (90s)');
+                audio.click();
+              }
+            } else if (!car && sideJobs.nearStart(player.position.x, player.position.z)) {
+              const def = sideJobs.nearStart(player.position.x, player.position.z);
+              if (def && sideJobs.start(def.id)) {
+                hud.toast(`${def.name} — ${def.time}s on the clock`, 4000);
                 audio.click();
               }
             } else if (!car && safehouses.isNearSafehouse(player.position.x, player.position.z)) {
@@ -432,7 +480,9 @@ function animate() {
           for (const hit of res.hits) {
             if (hit.result === 'down') {
               state.kills += 1;
-              police.commitCrime(2);
+              // Dropping a rival attacker while defending turf is not a
+              // crime — the SBPD has no problem with it (v4 defense).
+              if (!territory.isDefenseAttacker(hit.target)) police.commitCrime(2);
               pedestrians.scareAll(player.position, 40);
               // v3: three police downs in one unowned zone capture it.
               if (police.isCopUnit(hit.target)) {
@@ -448,6 +498,7 @@ function animate() {
       vehicles.update(delta, input, player);
       boats.update(delta, input, player, elapsed);
       dockRun.update(delta);
+      sideJobs.update(delta);
       // v4: drift / nitro / jump scoring runs after the drive step so it
       // reads this frame's drift + airborne state. Skipped while a shot
       // owns the camera (heli / territory), so the FOV stretch never
@@ -485,7 +536,7 @@ function animate() {
       };
       police.update(delta, player, elapsed);
       crew.update(delta);
-      territory.update(delta);
+      territory.update(delta, player);
       missions.update(delta);
       audio.engine(player.onFoot ? 0 : (player.vehicle ? player.vehicle.speedMph : 0));
       audio.siren(state.wanted > 0 && police.cops.length > 0);
@@ -504,6 +555,8 @@ function animate() {
       audio.siren(false);
       audio.heli(false);
       if (player.wasted) missions.failMission('wasted');
+      sideJobs.fail('wasted');
+      territory.onPlayerDown();
       show(gameoverScreen, true);
     }
     updateHud();
@@ -526,6 +579,7 @@ window.__game = {
   vehicles,
   boats,
   dockRun,
+  sideJobs,
   drivingFun,
   pedestrians,
   police,
